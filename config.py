@@ -13,7 +13,11 @@ class Config:
     JWT_ACCESS_TOKEN_EXPIRES = timedelta(hours=24)
     JWT_REFRESH_TOKEN_EXPIRES = timedelta(days=30)
     
-    # Database Configuration
+    # MongoDB Configuration
+    MONGO_URI = os.environ.get('MONGO_URI') or 'mongodb+srv://vinayvaja2276_db_user:hQUK8VwcE6ONavbx@cluster0.ucvbuyy.mongodb.net/?appName=Cluster0'
+    MONGO_DB_NAME = os.environ.get('MONGO_DB_NAME') or 'veriflow_auth'
+    
+    # Legacy - kept for compatibility but not used with MongoDB
     DATABASE_PATH = os.environ.get('DATABASE_PATH') or 'database/auth_system.db'
     
     # Model Configuration
@@ -48,6 +52,9 @@ class Config:
     SOCKETIO_CORS_ALLOWED_ORIGINS = "*"
     SOCKETIO_LOGGER = False
     SOCKETIO_ENGINEIO_LOGGER = False
+    
+    # CORS Configuration
+    CORS_ORIGINS = os.environ.get('CORS_ORIGINS', 'http://localhost:3000,http://localhost:3001').split(',')
     
     # Security Configuration
     BCRYPT_LOG_ROUNDS = 12
@@ -90,7 +97,7 @@ class TestingConfig(Config):
     """Testing configuration"""
     TESTING = True
     DEBUG = True
-    DATABASE_PATH = ':memory:'  # In-memory database for testing
+    MONGO_DB_NAME = 'veriflow_auth_test'
     BCRYPT_LOG_ROUNDS = 4  # Faster for testing
 
 # Configuration dictionary

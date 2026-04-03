@@ -4,10 +4,13 @@ Behavioral Authentication System - Main Flask Application
 Advanced continuous authentication using behavioral biometrics and machine learning
 """
 
-from flask import Flask, render_template, request, jsonify, session, redirect, url_for
+from flask import Flask, request, jsonify, session
+from flask_cors import CORS
 from flask_socketio import SocketIO, emit, join_room, leave_room
 from flask_jwt_extended import JWTManager, create_access_token, jwt_required, get_jwt_identity
 import os
+from dotenv import load_dotenv
+load_dotenv()
 import json
 import threading
 import time
@@ -44,6 +47,12 @@ def create_app(config_name='development'):
     app = Flask(__name__)
     app.config.from_object(config[config_name])
     
+    # Initialize CORS
+    CORS(app, origins=app.config.get('CORS_ORIGINS', ['http://localhost:3000']),
+         supports_credentials=True,
+         allow_headers=['Content-Type', 'Authorization'],
+         methods=['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'])
+    
     # Initialize extensions
     jwt = JWTManager(app)
     socketio = SocketIO(
@@ -54,8 +63,11 @@ def create_app(config_name='development'):
         async_mode='threading'
     )
     
-    # Initialize core components
-    db_manager = DatabaseManager(app.config['DATABASE_PATH'])
+    # Initialize core components - MongoDB
+    db_manager = DatabaseManager(
+        mongo_uri=app.config['MONGO_URI'],
+        db_name=app.config.get('MONGO_DB_NAME', 'veriflow_auth')
+    )
     
     # Global storage for active sessions and models
     active_sessions = {}  # session_id -> session_data
@@ -113,28 +125,16 @@ def create_app(config_name='development'):
             raise
     
     # =========================================================================
-    # WEB ROUTES
+    # HEALTH CHECK
     # =========================================================================
     
     @app.route('/')
     def index():
-        return redirect(url_for('login'))
+        return jsonify({'status': 'VeriFlow Behavioral Auth API running', 'version': '3.0'})
     
-    @app.route('/login')
-    def login():
-        return render_template('login.html')
-    
-    @app.route('/calibration')
-    def calibration():
-        return render_template('calib.html')
-    
-    @app.route('/challenge')
-    def challenge():
-        return render_template('challenge.html')
-    
-    @app.route('/admin')
-    def admin():
-        return render_template('admin.html')
+    @app.route('/api/health')
+    def health():
+        return jsonify({'status': 'ok', 'database': 'mongodb', 'models': 6})
     
     # =========================================================================
     # API ROUTES
@@ -1516,13 +1516,31 @@ def create_app(config_name='development'):
 # Create app instance for direct execution
 if __name__ == '__main__':
     # Ensure directories exist
-    os.makedirs('database', exist_ok=True)
     os.makedirs('models/saved', exist_ok=True)
-    os.makedirs('static/css', exist_ok=True)
-    os.makedirs('static/js', exist_ok=True)
-    os.makedirs('templates', exist_ok=True)
     
     app, socketio = create_app()
+    
+    # Admin API endpoints
+    @app.route('/api/admin/users')
+    def admin_users():
+        try:
+            users = db_manager.get_all_users()
+            for u in users:
+                u['created_at'] = u['created_at'].isoformat() if u.get('created_at') else None
+                u['last_login'] = u['last_login'].isoformat() if u.get('last_login') else None
+            return jsonify({'success': True, 'users': users})
+        except Exception as e:
+            return jsonify({'error': str(e)}), 500
+
+    @app.route('/api/admin/events')
+    def admin_events():
+        try:
+            events = db_manager.get_recent_auth_events(limit=50)
+            for e in events:
+                e['timestamp'] = e['timestamp'].isoformat() if e.get('timestamp') else None
+            return jsonify({'success': True, 'events': events})
+        except Exception as ex:
+            return jsonify({'error': str(ex)}), 500
     
     logger.info("Starting Behavioral Authentication System...")
     logger.info(f"Debug mode: {app.config['DEBUG']}")
