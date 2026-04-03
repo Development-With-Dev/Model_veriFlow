@@ -732,8 +732,20 @@ def create_app(config_name='development'):
 
             if on_device and client_feats:
                 # ---- Path B: On-device processed (Privacy Layer) ----
-                features = client_feats
-                sample_count = client_feats.get('event_count', 1)
+                # Support both single feature dict and list of features
+                if isinstance(client_feats, list) and len(client_feats) > 0:
+                    features = client_feats[0]
+                elif isinstance(client_feats, dict):
+                    features = client_feats
+                else:
+                    features = client_feats # fallback
+                
+                # Safe access to event_count
+                if isinstance(features, dict):
+                    sample_count = features.get('event_count', 1)
+                else:
+                    sample_count = 1
+                
                 logger.info(
                     f"On-device features received for user {user_id} "
                     f"(privacy={privacy_level}, battery={data.get('battery_level', '?')})"
@@ -985,7 +997,7 @@ def create_app(config_name='development'):
                 logger.warning(f"Risk event logging error: {e}")
 
             logger.info(
-                f"Risk assessment user={user_id}  ml={ml_score:.3f} → adj={adjusted_score:.3f}  "
+                f"Risk assessment user={user_id}  ml={ml_score:.3f} -> adj={adjusted_score:.3f}  "
                 f"tier={tier}  anomalies={consecutive_anomalies}  "
                 f"rules={[m['rule'] for m in multipliers_fired]}"
             )
@@ -1130,8 +1142,16 @@ def create_app(config_name='development'):
             raw_events = data.get('events', [])
             timestamp = data.get('timestamp', time.time())
             
-            if not raw_events or data_type not in ['keystroke', 'mouse']:
-                logger.warning(f"Invalid behavioral data: type={data_type}, events={len(raw_events)}")
+            # Support on-device processed data (no raw events)
+            on_device = data.get('on_device', False)
+            precomputed_features = data.get('features')
+            
+            if not on_device and not raw_events:
+                 logger.warning(f"Invalid behavioral data: type={data_type}, events={len(raw_events)}")
+                 return
+                 
+            if data_type not in ['keystroke', 'mouse', 'touch']:
+                logger.warning(f"Invalid behavioral data type: {data_type}")
                 return
             
             # Initialize components if needed
@@ -1141,13 +1161,26 @@ def create_app(config_name='development'):
             try:
                 extractor = user_extractors[user_id]
                 
-                if data_type == 'keystroke':
+                if on_device and precomputed_features:
+                    # Sanity check: Ensure it's a dict, not a list of features
+                    if isinstance(precomputed_features, list) and len(precomputed_features) > 0:
+                        features = precomputed_features[0]
+                    elif isinstance(precomputed_features, dict):
+                        features = precomputed_features
+                    else:
+                        features = None
+                        
+                    if features:
+                        logger.info(f"Accepted on-device features for {data_type} (user {user_id})")
+                elif data_type == 'keystroke':
                     features = extractor.extract_keystroke_features(raw_events)
-                else:
+                elif data_type == 'mouse':
                     features = extractor.extract_mouse_features(raw_events)
+                else: # touch requires on-device processing usually
+                    features = None
                 
                 if not features:
-                    logger.warning(f"No features extracted from {data_type} data")
+                    logger.warning(f"No features extracted/provided for {data_type} data type={data_type} on_device={on_device}")
                     return
                 
                 # Validate and fix feature dimensions
@@ -1267,6 +1300,14 @@ def create_app(config_name='development'):
                 auth_score = ensemble_result['ensemble']['authenticity_score']
                 confidence = ensemble_result['ensemble']['confidence']
                 consensus = ensemble_result['ensemble']['consensus']
+                
+                # Detailed logging for visibility
+                m_votes = []
+                for m, res in ensemble_result.items():
+                    if m != 'ensemble' and 'score' in res:
+                        m_votes.append(f"{m}: {res['score']:.2f}")
+                
+                logger.info(f"Ensemble Result for {data_type}: Score={auth_score:.2f} | Conf={confidence:.2f} | Votes=[{', '.join(m_votes)}]")
                 
             except Exception as e:
                 logger.error(f"Ensemble prediction error: {e}")

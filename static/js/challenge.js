@@ -1,183 +1,3 @@
-// js/challenge.js
-
-document.addEventListener('DOMContentLoaded', () => {
-    const challengeInput = document.getElementById('challengeInput');
-    const authStatusBox = document.getElementById('authStatusBox');
-    const authStatusMessage = document.getElementById('authStatusMessage');
-    const logoutBtn = document.getElementById('logoutBtn');
-
-    const SLIDING_WINDOW_SIZE_MS = 30 * 1000; // 30 seconds
-    const AUTHENTICATION_INTERVAL_MS = 5 * 1000; // Send data every 5 seconds for continuous auth
-
-    let keystrokeEvents = [];
-    let mouseEvents = [];
-    let lastKeyDownTime = 0;
-    let lastMouseMoveTime = 0;
-    let authenticationInterval;
-    let webSocket; // Simulated WebSocket
-
-    // --- UI Update Function ---
-    function updateAuthStatus(status, message) {
-        authStatusBox.classList.remove('auth', 'risk', 'high-risk', 'loading');
-        authStatusMessage.textContent = message;
-
-        // Remove previous loading spinner if it exists
-        const spinner = authStatusBox.querySelector('svg');
-        if (spinner) spinner.remove();
-
-        switch (status) {
-            case 'authenticated':
-                authStatusBox.classList.add('auth');
-                break;
-            case 'risk':
-                authStatusBox.classList.add('risk');
-                break;
-            case 'high-risk':
-                authStatusBox.classList.add('high-risk');
-                // Optionally add a spinner for high-risk if a backend check is initiated
-                // addSpinner(authStatusBox);
-                break;
-            case 'loading':
-            default:
-                authStatusBox.classList.add('loading');
-                addSpinner(authStatusBox);
-                break;
-        }
-    }
-
-    // Helper to add a loading spinner
-    function addSpinner(element) {
-        const spinnerSvg = `
-            <svg class="animate-spin -ml-1 mr-3 h-5 w-5 text-gray-700" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-            </svg>
-        `;
-        // Insert spinner at the beginning of the status box
-        element.insertAdjacentHTML('afterbegin', spinnerSvg);
-    }
-
-    // --- Data Collection ---
-
-    // Keystroke event listeners
-    challengeInput.addEventListener('keydown', (e) => {
-        if (!e.repeat) {
-            const currentTime = performance.now();
-            keystrokeEvents.push({
-                type: 'keydown',
-                key: e.key,
-                keyCode: e.keyCode,
-                timestamp: currentTime
-            });
-            lastKeyDownTime = currentTime;
-        }
-    });
-
-    challengeInput.addEventListener('keyup', (e) => {
-        const currentTime = performance.now();
-        keystrokeEvents.push({
-            type: 'keyup',
-            key: e.key,
-            keyCode: e.keyCode,
-            timestamp: currentTime
-        });
-    });
-
-    // Mouse event listeners (on the whole document for broader capture)
-    document.addEventListener('mousemove', (e) => {
-        const currentTime = performance.now();
-        if (currentTime - lastMouseMoveTime > 50) {
-            mouseEvents.push({
-                type: 'mousemove',
-                x: e.clientX,
-                y: e.clientY,
-                timestamp: currentTime
-            });
-            lastMouseMoveTime = currentTime;
-        }
-    });
-
-    document.addEventListener('mousedown', (e) => {
-        mouseEvents.push({
-            type: 'mousedown',
-            button: e.button,
-            x: e.clientX,
-            y: e.clientY,
-            timestamp: performance.now()
-        });
-    });
-
-    document.addEventListener('mouseup', (e) => {
-        mouseEvents.push({
-            type: 'mouseup',
-            button: e.button,
-            x: e.clientX,
-            y: e.clientY,
-            timestamp: performance.now()
-        });
-    });
-
-    // --- Sliding Window & WebSocket Simulation ---
-
-    function sendBehavioralDataForAuth() {
-        const currentTime = performance.now();
-        const windowStartTime = currentTime - SLIDING_WINDOW_SIZE_MS;
-
-        // Filter events within the current sliding window
-        const windowKeystrokeEvents = keystrokeEvents.filter(event => event.timestamp >= windowStartTime);
-        const windowMouseEvents = mouseEvents.filter(event => event.timestamp >= windowStartTime);
-
-        // Remove old events
-        keystrokeEvents = windowKeystrokeEvents;
-        mouseEvents = windowMouseEvents;
-
-        // Only send data if there's significant activity
-        if (windowKeystrokeEvents.length > 5 || windowMouseEvents.length > 10) {
-            const dataToSend = {
-                keystroke_data: windowKeystrokeEvents,
-                mouse_data: windowMouseEvents,
-                timestamp: Date.now()
-            };
-
-            // Simulate sending data via WebSocket
-            console.log('Sending behavioral data for authentication:', dataToSend);
-            updateAuthStatus('loading', 'Authenticating your behavior...');
-
-        } else {
-            updateAuthStatus('authenticated', 'No activity, session secure.'); // Default if no activity
-        }
-    }
-
-    // --- Initialization ---
-    function initChallenge() {
-        // Simulate WebSocket connection
-        // webSocket = new WebSocket('ws://your-backend-websocket-url/challenge');
-        // webSocket.onopen = () => console.log('WebSocket connected for challenge');
-        // webSocket.onmessage = (event) => {
-        //     const data = JSON.parse(event.data);
-        //     console.log('Received auth status:', data);
-        //     updateAuthStatus(data.status, data.message);
-        // };
-        // webSocket.onerror = (error) => console.error('WebSocket error:', error);
-        // webSocket.onclose = () => console.log('WebSocket closed');
-
-        // Start sending data for authentication checks
-        authenticationInterval = setInterval(sendBehavioralDataForAuth, AUTHENTICATION_INTERVAL_MS);
-
-        logoutBtn.addEventListener('click', () => {
-            clearInterval(authenticationInterval);
-            // if (webSocket) webSocket.close();
-            console.log('Logged out.');
-            window.location.href = 'login.html'; // Redirect to login page on logout
-        });
-
-        // Initial status display
-        updateAuthStatus('loading', 'Authenticating your behavior...');
-        challengeInput.focus();
-    }
-
-    initChallenge();
-});
 /**
  * Challenge/Dashboard Page JavaScript
  * Handles real-time behavioral monitoring and dashboard functionality
@@ -216,6 +36,8 @@ class DashboardManager {
         this.confidenceLevel = 0.0;
         this.anomalyRisk = 'Low';
         this.securityScore = 85;
+        this.sessionStartTime = new Date();
+        this.authenticityScores = [];
         
         // Charts
         this.behaviorChart = null;
@@ -232,13 +54,92 @@ class DashboardManager {
         this.authUpdateInterval = null;
         this.chartUpdateInterval = null;
         this.statsUpdateInterval = null;
+        this.monitorFlushInterval = null;
+        this.isJudgeDemo = false;
         
         this.initializeElements();
         this.setupEventListeners();
         this.connectWebSocket();
         this.initializeCharts();
         this.startRealTimeMonitoring();
-        this.updateUserInfo();
+        this.setupJudgeDemo();
+    }
+
+    setupJudgeDemo() {
+        const btn = document.getElementById('judgeDemoBtn');
+        if (!btn) return;
+
+        btn.onclick = () => {
+            this.isJudgeDemo = !this.isJudgeDemo;
+            if (this.isJudgeDemo) {
+                btn.style.background = 'linear-gradient(135deg, #10b981, #059669)';
+                btn.style.color = '#fff';
+                btn.innerHTML = '<i class="fas fa-check-circle"></i> DEMO ACTIVE';
+                this.enableJudgeDemo();
+            } else {
+                location.reload(); // reset everything
+            }
+        };
+    }
+
+    enableJudgeDemo() {
+        console.log('🏆  JUDGE DEMO MODE ACTIVATED');
+        this.showDemoBanner('🏆 JUDGE DEMO: All features unlocked & simulated.');
+
+        // 1. Instant Calibration
+        this.confidenceLevel = 0.94;
+        this.currentAuthScore = 0.91;
+        this.statusText.textContent = 'Demo Mode: Locked';
+        this.statusIndicator.querySelector('.status-dot').className = 'status-dot green';
+
+        // 2. Populate Metrics
+        if (this.keystrokeSamplesEl) this.keystrokeSamplesEl.textContent = '1,420';
+        if (this.mouseSamplesEl) this.mouseSamplesEl.textContent = '2,850';
+        if (this.trustPctEl) this.trustPctEl.textContent = '91%';
+
+        // 3. Populate Charts with "Perfect" Data
+        this.populateMockCharts();
+
+        // 4. Mock Activity
+        this.addActivityItem({
+            type: 'info',
+            message: 'Judge Session Started',
+            timestamp: new Date().toISOString()
+        });
+        this.addActivityItem({
+            type: 'success',
+            message: 'Model Training (GRU-38) Optimized',
+            timestamp: new Date().toISOString()
+        });
+
+        // 5. Override updateAuthenticationStats
+        const oldUpdate = this.updateAuthenticationStats.bind(this);
+        this.updateAuthenticationStats = () => {
+            if (!this.isJudgeDemo) return oldUpdate();
+            // jitter the score for realism
+            const jitter = (Math.random() - 0.5) * 0.05;
+            this.currentAuthScore = Math.max(0.85, Math.min(0.96, this.currentAuthScore + jitter));
+            this.updateAuthenticationDisplay();
+        };
+
+        this.updateAuthenticationDisplay();
+        updateTrustRing(0.91);
+    }
+
+    populateMockCharts() {
+        if (this.behaviorChart) {
+            const data = Array.from({length: 20}, () => 0.85 + Math.random() * 0.1);
+            this.behaviorChart.data.labels = Array.from({length: 20}, (_, i) => `T-${20-i}s`);
+            this.behaviorChart.data.datasets[0].data = data;
+            this.behaviorChart.update();
+        }
+
+        if (this.timeChart) {
+            this.timeChart.data.labels = Array.from({length: 12}, (_, i) => `${i*2}h`);
+            this.timeChart.data.datasets[0].data = [0.88, 0.91, 0.89, 0.94, 0.92, 0.95, 0.91, 0.88, 0.90, 0.93, 0.95, 0.91];
+            this.timeChart.data.datasets[1].data = [0.12, 0.08, 0.15, 0.05, 0.09, 0.04, 0.11, 0.18, 0.12, 0.07, 0.04, 0.10];
+            this.timeChart.update();
+        }
     }
 
     initializeElements() {
@@ -270,6 +171,8 @@ class DashboardManager {
         this.anomalyRiskEl = document.getElementById('anomalyRisk');
         this.keystrokeSamplesEl = document.getElementById('keystrokeSamples');
         this.mouseSamplesEl = document.getElementById('mouseSamples');
+        this.sessionDurationEl = document.getElementById('sessionDuration');
+        this.trustAverageEl = document.getElementById('trustAverage');
         this.monitorStatus = document.getElementById('monitorStatus');
         
         // Activity log
@@ -333,8 +236,32 @@ class DashboardManager {
             this.markAllNotificationsRead();
         });
         
-        // Quick actions
-        this.runSecurityCheck.addEventListener('click', () => this.runSecurityCheck());
+        // Settings - Security
+        if (this.enableRealTimeAuth) {
+            this.enableRealTimeAuth.addEventListener('change', () => this.updateSettings());
+        }
+        if (this.enableAnomalyAlerts) {
+            this.enableAnomalyAlerts.addEventListener('change', () => this.updateSettings());
+        }
+        if (this.enableDriftDetection) {
+            this.enableDriftDetection.addEventListener('change', () => this.updateSettings());
+        }
+
+        // Settings - Privacy & Efficiency
+        if (this.onDeviceProcessingEl) {
+            this.onDeviceProcessingEl.addEventListener('change', () => this.updateSettings());
+        }
+        if (this.lowBatteryModeEl) {
+            this.lowBatteryModeEl.addEventListener('change', () => this.updateSettings());
+        }
+        if (this.samplingFreqEl) {
+            this.samplingFreqEl.addEventListener('input', () => this.updateSettings());
+        }
+
+        // Quick Actions
+        if (this.runSecurityCheck) {
+            this.runSecurityCheck.addEventListener('click', () => this.runSecurityCheck());
+        }
         this.updateModels.addEventListener('click', () => this.updateModels());
         this.exportLogs.addEventListener('click', () => this.exportLogs());
         this.testBehavior.addEventListener('click', () => this.toggleTestArea());
@@ -645,15 +572,30 @@ class DashboardManager {
             this.updateCharts();
         }, 10000);
         
-        // Update general stats
-        this.statsUpdateInterval = setInterval(() => {
-            this.updateGeneralStats();
-        }, 30000);
-
-        // Flush touch biometric buffer every 5 s
-        this.touchFlushInterval = setInterval(() => {
-            this.sendTouchData();
+        // Flush behavioral data every 5 s (Legacy support + Privacy Layer)
+        this.monitorFlushInterval = setInterval(() => {
+            this.flushBehavioralData();
         }, 5000);
+    }
+
+    flushBehavioralData() {
+        const SLIDING_WINDOW_MS = 30000;
+        const now = Date.now();
+        const start = now - SLIDING_WINDOW_MS;
+
+        // Filter and send Keystrokes
+        const ks = this.behavioralBuffer.keystroke.filter(e => e.timestamp >= start);
+        if (ks.length > 5) {
+            this.sendBehavioralData('keystroke', ks);
+        }
+        this.behavioralBuffer.keystroke = ks;
+
+        // Filter and send Mouse
+        const ms = this.behavioralBuffer.mouse.filter(e => e.timestamp >= start);
+        if (ms.length > 10) {
+            this.sendBehavioralData('mouse', ms);
+        }
+        this.behavioralBuffer.mouse = ms;
     }
 
     captureKeystroke(e) {
@@ -688,12 +630,6 @@ class DashboardManager {
         
         this.behavioralBuffer.keystroke.push(keystroke);
         this.lastKeystroke = keystroke;
-        
-        // Send data in batches
-        if (this.behavioralBuffer.keystroke.length >= 20) {
-            this.sendBehavioralData('keystroke', this.behavioralBuffer.keystroke.slice());
-            this.behavioralBuffer.keystroke = [];
-        }
     }
 
     captureMouseMovement(e) {
@@ -728,12 +664,6 @@ class DashboardManager {
         };
         
         this.behavioralBuffer.mouse.push(mouseEvent);
-        
-        // Send data in batches
-        if (this.behavioralBuffer.mouse.length >= 50) {
-            this.sendBehavioralData('mouse', this.behavioralBuffer.mouse.slice());
-            this.behavioralBuffer.mouse = [];
-        }
     }
 
     captureMouseClick(e) {
@@ -875,6 +805,12 @@ class DashboardManager {
         this.currentAuthScore = data.authenticity_score || 0;
         this.confidenceLevel = (data.confidence || 0) * 100;
         this.anomalyRisk = this.getAnomalyRiskLevel(data.anomaly_score || 0);
+
+        // Keep last 100 scores for averaging
+        this.authenticityScores.push(this.currentAuthScore);
+        if (this.authenticityScores.length > 100) {
+            this.authenticityScores.shift();
+        }
         
         this.updateAuthenticationDisplay();
         this.addAuthDataToChart(data);
@@ -1263,6 +1199,24 @@ class DashboardManager {
         }
     }
 
+    updateAuthenticationStats() {
+        // Update session duration placeholder
+        if (this.sessionDurationEl) {
+            const start = this.sessionStartTime || new Date();
+            const now = new Date();
+            const diff = Math.floor((now - start) / 1000);
+            const m = Math.floor(diff / 60);
+            const s = diff % 60;
+            this.sessionDurationEl.textContent = `${m}m ${s}s`;
+        }
+        
+        // Update average trust placeholder if scores exist
+        if (this.trustAverageEl && this.authenticityScores && this.authenticityScores.length > 0) {
+            const avg = this.authenticityScores.reduce((a,b) => a+b, 0) / this.authenticityScores.length;
+            this.trustAverageEl.textContent = (avg * 100).toFixed(1) + '%';
+        }
+    }
+
     updateCharts() {
         // Add random data for demonstration
         if (this.patternsChart) {
@@ -1491,121 +1445,6 @@ document.addEventListener('DOMContentLoaded', () => {
     handleResize();
     
     console.log('🛡️ Behavioral Authentication Dashboard Initialized');
-});
-
-// Export for potential use in other modules
-window.DashboardManager = DashboardManager;
-
-document.addEventListener('DOMContentLoaded', () => {
-    const socket = io();  // Connect to Flask-SocketIO
-    const sessionId = localStorage.getItem('session_id');
-    const SLIDING_WINDOW_MS = 30000;
-    const AUTH_INTERVAL_MS = 5000;
-
-    let keystrokeEvents = [];
-    let mouseEvents = [];
-
-    // Emit session join to backend
-    socket.emit('join_session', { session_id: sessionId });
-
-    // Listen for input and mouse activity
-    document.addEventListener('keydown', e => {
-        keystrokeEvents.push({
-            key: e.key,
-            type: 'keydown',
-            timestamp: performance.now()
-        });
-    });
-
-    document.addEventListener('keyup', e => {
-        keystrokeEvents.push({
-            key: e.key,
-            type: 'keyup',
-            timestamp: performance.now()
-        });
-    });
-
-    document.addEventListener('mousemove', e => {
-        mouseEvents.push({
-            type: 'move',
-            x: e.clientX,
-            y: e.clientY,
-            timestamp: performance.now()
-        });
-    });
-
-    document.addEventListener('mousedown', e => {
-        mouseEvents.push({
-            type: 'mousedown',
-            x: e.clientX,
-            y: e.clientY,
-            timestamp: performance.now()
-        });
-    });
-
-    document.addEventListener('mouseup', e => {
-        mouseEvents.push({
-            type: 'mouseup',
-            x: e.clientX,
-            y: e.clientY,
-            timestamp: performance.now()
-        });
-    });
-
-    setInterval(() => {
-        const now = performance.now();
-        const start = now - SLIDING_WINDOW_MS;
-
-        const recentKeystrokes = keystrokeEvents.filter(e => e.timestamp >= start);
-        const recentMouse = mouseEvents.filter(e => e.timestamp >= start);
-
-        if (recentKeystrokes.length > 5) {
-            socket.emit('behavioral_data', {
-                type: 'keystroke',
-                events: recentKeystrokes,
-                timestamp: Date.now()
-            });
-        }
-
-        if (recentMouse.length > 10) {
-            socket.emit('behavioral_data', {
-                type: 'mouse',
-                events: recentMouse,
-                timestamp: Date.now()
-            });
-        }
-
-        keystrokeEvents = recentKeystrokes;
-        mouseEvents = recentMouse;
-    }, AUTH_INTERVAL_MS);
-
-    socket.on('auth_result', data => {
-        const authScore = data.authenticity_score || 0;
-        const confidence = data.confidence || 0;
-        const anomaly = data.anomaly_score || 0;
-
-        document.getElementById('authScore').textContent = authScore.toFixed(2);
-        document.getElementById('confidenceLevel').textContent = (confidence * 100).toFixed(1) + '%';
-        document.getElementById('anomalyRisk').textContent =
-            anomaly < 0.3 ? 'Low' : anomaly < 0.7 ? 'Medium' : 'High';
-
-        const statusText = document.getElementById('statusText');
-        const statusDot = document.getElementById('statusIndicator').querySelector('.status-dot');
-
-        if (authScore >= 0.8) {
-            statusText.textContent = 'Authenticated';
-            statusDot.className = 'status-dot green';
-        } else if (authScore >= 0.6 || anomaly < 0.5) {
-            statusText.textContent = 'Risk Detected';
-            statusDot.className = 'status-dot yellow';
-        } else {
-            statusText.textContent = 'High Risk';
-            statusDot.className = 'status-dot red';
-        }
-
-        // ── Also update the Trust Ring with the auth score ──
-        updateTrustRing(authScore);
-    });
 });
 
 /* =========================================================================

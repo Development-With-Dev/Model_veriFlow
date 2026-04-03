@@ -20,7 +20,7 @@ warnings.filterwarnings('ignore')
 class GRUSequenceModel:
     """GRU model for sequential behavioral data analysis"""
     
-    def __init__(self, sequence_length: int = 50, feature_dim: int = 20, 
+    def __init__(self, sequence_length: int = 50, feature_dim: int = 38, 
                  hidden_units: int = 64):
         self.sequence_length = sequence_length
         self.feature_dim = feature_dim
