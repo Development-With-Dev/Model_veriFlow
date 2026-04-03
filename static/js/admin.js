@@ -47,6 +47,19 @@ let sessions = [...SEED_SESSIONS];
 let expandedRow = null;
 let activeCharts = {};
 
+/* Merge any demo-flagged sessions from the dashboard (localStorage) */
+function loadDemoSessions() {
+    try {
+        const demo = JSON.parse(localStorage.getItem('demo_flagged_sessions') || '[]');
+        if (demo.length) {
+            // Prepend demo sessions (most recent first), avoid duplicates by id
+            const existingIds = new Set(sessions.map(s => s.id));
+            demo.forEach(d => { if (!existingIds.has(d.id)) sessions.unshift(d); });
+        }
+    } catch (e) { /* silent */ }
+}
+loadDemoSessions();
+
 /* =========================================================================
  *  RENDER TABLE
  * ========================================================================= */
@@ -77,6 +90,30 @@ function renderTable() {
         tr.addEventListener('click', () => toggleTimeline(idx));
         tbody.appendChild(tr);
 
+        // ── Build explain reasons HTML if present ──
+        let reasonsHTML = '';
+        if (s.reasons && s.reasons.length) {
+            reasonsHTML = `
+                <div style="margin-top:var(--spacing-lg);padding-top:var(--spacing-md);border-top:1px solid var(--border-color);">
+                    <h4 style="font-size:0.8rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:var(--spacing-sm);">
+                        <i class="fas fa-brain" style="color:var(--primary-light);margin-right:6px;"></i>Explainability
+                    </h4>
+                    ${s.reasons.map(r => {
+                        const absPct  = Math.min(Math.abs(r.delta_pct), 100);
+                        const barCol  = absPct > 40 ? '#ef4444' : absPct > 20 ? '#f59e0b' : '#10b981';
+                        const sign    = r.delta_pct >= 0 ? '+' : '';
+                        return `
+                        <div style="display:grid;grid-template-columns:1fr 100px 56px;align-items:center;gap:8px;padding:4px 0;font-size:0.82rem;">
+                            <span style="color:var(--text-secondary);">${r.label}</span>
+                            <div style="height:5px;background:var(--bg-tertiary);border-radius:3px;overflow:hidden;">
+                                <div style="width:${absPct}%;height:100%;background:${barCol};border-radius:3px;"></div>
+                            </div>
+                            <span style="text-align:right;font-family:monospace;font-weight:600;color:${r.delta_pct < 0 ? '#ef4444':'#10b981'};">${sign}${r.delta_pct}%</span>
+                        </div>`;
+                    }).join('')}
+                </div>`;
+        }
+
         // ── Timeline expansion row (hidden by default) ──
         const trExp = document.createElement('tr');
         trExp.className = 'timeline-row';
@@ -85,6 +122,7 @@ function renderTable() {
             <td colspan="6">
                 <div class="timeline-panel" id="timeline-panel-${idx}">
                     <canvas id="timeline-chart-${idx}"></canvas>
+                    ${reasonsHTML}
                     <div class="timeline-actions">
                         <button class="btn btn-secondary" onclick="overrideSession(${idx})">
                             <i class="fas fa-unlock"></i> Override — Restore Session
@@ -282,6 +320,7 @@ if (_origConfirm) {
 
 /* ── Refresh ── */
 document.getElementById('refreshTableBtn')?.addEventListener('click', () => {
+    localStorage.removeItem('demo_flagged_sessions');
     sessions = [...SEED_SESSIONS];
     renderTable();
 });

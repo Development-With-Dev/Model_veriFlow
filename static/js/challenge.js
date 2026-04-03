@@ -1793,3 +1793,167 @@ document.getElementById('blockLogoutBtn')?.addEventListener('click', () => {
     localStorage.clear();
     window.location.href = '/login';
 });
+
+/* =========================================================================
+ *  🎬  ATTACKER DEMO — hidden key "A" triggers the full sequence
+ *  ─────────────────────────────────────────────────────────────────────────
+ *  Timeline (8 s total):
+ *    0.0s  Ring at 91% green ("browsing normally")
+ *    2.0s  Drop to 74% — amber
+ *    4.0s  Drop to 58% — amber
+ *    6.0s  Drop to 41% — red crossing STEP_UP threshold
+ *    8.0s  STEP_UP OTP modal fires + explainability card populates
+ *
+ *  Press "A" again to reset ring back to 91%.
+ * ========================================================================= */
+
+const DEMO_KEYFRAMES = [
+    { t: 0,    score: 0.91 },
+    { t: 2000, score: 0.74 },
+    { t: 4000, score: 0.58 },
+    { t: 6000, score: 0.41 },
+];
+
+const DEMO_REASONS = [
+    { signal: 'flight_time_mean',  delta_pct: -48.2, label: 'Typing rhythm changed' },
+    { signal: 'hour_of_day',       delta_pct:  72.0, label: 'Unusual login hour' },
+    { signal: 'velocity_mean',     delta_pct:  35.7, label: 'New device pattern' },
+];
+
+let demoRunning = false;
+let demoTimers  = [];
+
+document.addEventListener('keydown', (e) => {
+    // Hidden trigger: uppercase A  (Shift+A  or CapsLock+a)
+    if (e.key !== 'A') return;
+
+    // Prevent firing inside form inputs
+    const tag = document.activeElement?.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+
+    if (demoRunning) {
+        resetDemo();
+        return;
+    }
+    startDemo();
+});
+
+function startDemo() {
+    demoRunning = true;
+    console.log('🎬 DEMO: Attack simulation started — ring will drop over 8 s');
+
+    // Show subtle indicator
+    showDemoBanner('🎬 DEMO MODE — simulating session takeover…');
+
+    // Phase 1: paint initial score
+    updateTrustRing(0.91);
+    document.getElementById('authScore').textContent = '0.91';
+
+    // Phase 2: schedule keyframe drops
+    DEMO_KEYFRAMES.forEach(kf => {
+        const timer = setTimeout(() => {
+            updateTrustRing(kf.score);
+            document.getElementById('authScore').textContent = kf.score.toFixed(2);
+
+            // Update the status header
+            const statusText = document.getElementById('statusText');
+            const statusDot  = document.getElementById('statusIndicator')?.querySelector('.status-dot');
+            if (kf.score > 0.75) {
+                if (statusText) statusText.textContent = 'Authenticated';
+                if (statusDot)  statusDot.className = 'status-dot green';
+            } else if (kf.score >= 0.45) {
+                if (statusText) statusText.textContent = 'Risk Detected';
+                if (statusDot)  statusDot.className = 'status-dot yellow';
+            } else {
+                if (statusText) statusText.textContent = 'HIGH RISK';
+                if (statusDot)  statusDot.className = 'status-dot red';
+            }
+
+            console.log(`🎬 DEMO: score → ${kf.score}`);
+        }, kf.t);
+        demoTimers.push(timer);
+    });
+
+    // Phase 3: after the last drop, fire STEP_UP + explainability
+    const finalTimer = setTimeout(() => {
+        // Populate explainability card
+        renderExplainCard(DEMO_REASONS);
+
+        // Fire OTP modal
+        showOtpModal();
+
+        showDemoBanner('🔒 STEP_UP fired — attacker cannot provide OTP');
+
+        // Push flagged session to admin (via localStorage so admin.js picks it up)
+        pushDemoFlaggedSession();
+
+        console.log('🎬 DEMO: STEP_UP modal fired. Attacker locked out.');
+    }, 8000);
+    demoTimers.push(finalTimer);
+}
+
+function resetDemo() {
+    demoTimers.forEach(clearTimeout);
+    demoTimers = [];
+    demoRunning = false;
+    hideOtpModal();
+
+    updateTrustRing(0.91);
+    document.getElementById('authScore').textContent = '0.91';
+
+    const statusText = document.getElementById('statusText');
+    const statusDot  = document.getElementById('statusIndicator')?.querySelector('.status-dot');
+    if (statusText) statusText.textContent = 'Authenticated';
+    if (statusDot)  statusDot.className = 'status-dot green';
+
+    // Reset explainability card
+    renderExplainCard([]);
+
+    hideDemoBanner();
+    console.log('🎬 DEMO: Reset to normal (91% green)');
+}
+
+/* ── Push a flagged session to admin page via localStorage ── */
+function pushDemoFlaggedSession() {
+    const flagged = {
+        id:       'sess_DEMO_' + Date.now().toString(36),
+        user:     localStorage.getItem('username') || 'demo_user',
+        time:     new Date().toLocaleString('sv-SE').replace('T', ' '),
+        score:    0.41,
+        tier:     'STEP_UP',
+        anomalies: 3,
+        status:   'otp_pending',
+        timeline: [0.91, 0.88, 0.82, 0.74, 0.65, 0.58, 0.49, 0.41],
+        reasons:  DEMO_REASONS
+    };
+    // Store for admin.js to pick up
+    const existing = JSON.parse(localStorage.getItem('demo_flagged_sessions') || '[]');
+    existing.unshift(flagged);
+    localStorage.setItem('demo_flagged_sessions', JSON.stringify(existing));
+}
+
+/* ── Subtle floating banner ── */
+function showDemoBanner(text) {
+    let banner = document.getElementById('demoBanner');
+    if (!banner) {
+        banner = document.createElement('div');
+        banner.id = 'demoBanner';
+        banner.style.cssText = `
+            position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+            background: rgba(99,102,241,0.9); color: #fff;
+            padding: 10px 28px; border-radius: 999px;
+            font-size: 0.85rem; font-weight: 600; letter-spacing: 0.5px;
+            z-index: 9999; backdrop-filter: blur(8px);
+            box-shadow: 0 4px 24px rgba(99,102,241,0.4);
+            transition: opacity 0.3s ease, transform 0.3s ease;
+        `;
+        document.body.appendChild(banner);
+    }
+    banner.textContent = text;
+    banner.style.opacity = '1';
+}
+
+function hideDemoBanner() {
+    const banner = document.getElementById('demoBanner');
+    if (banner) banner.style.opacity = '0';
+}
