@@ -1,0 +1,191 @@
+flowchart TB
+    %% ==========================================================
+    %% VeriFlow - Whole Model System Architecture
+    %% ==========================================================
+
+    subgraph U[User Interaction Layer]
+        USER[End User]
+        ADMIN[Admin User]
+    end
+
+    subgraph C[Browser Client Layer]
+        LOGIN[login.html + login.js]
+        CALIB[calib.html + calib.js]
+        DASH[challenge.html + challenge.js]
+        APANEL[admin.html + admin.js]
+
+        subgraph COL[Behavior Collectors]
+            KC[Keystroke Capture]
+            MC[Mouse Capture]
+            TC[touch_collector.js]
+        end
+
+        PL[privacy_layer.js\nOn-device features + minimization + battery-aware sampling]
+        WSCLI[Socket.IO Client]
+        RESTCLI[Fetch REST Client]
+        LS[LocalStorage\nsession_id, user_id, username, token]
+    end
+
+    subgraph S[Flask Backend - app.py]
+        WEB[Web Routes\n/, /login, /calibration, /challenge, /admin]
+
+        subgraph API[REST API]
+            REG["/api/register"]
+            LGIN["/api/login"]
+            LGOUT["/api/logout"]
+            SSTAT["/api/session/status"]
+            BDATA["/api/behavioral-data"]
+            CALDONE["/api/calibration/complete"]
+            RISK["/api/risk"]
+            UDEL["/api/user-data DELETE"]
+        end
+
+        subgraph WSEV[Socket.IO Events]
+            CONN[connect / disconnect]
+            JOIN[join_session]
+            BEVT[behavioral_data]
+            AUTHRES[emit auth_result]
+            SECALERT[emit security_alert]
+            DRIFTREQ[request_drift_analysis]
+            DRIFTRES[emit drift_analysis]
+        end
+
+        AUTH[Session Auth + Active Session Tracking]
+        BUFF[In-memory Behavioral Buffers\nkeystroke/mouse/recent_features]
+    end
+
+    subgraph M[Behavior Intelligence Layer]
+        FE[utils/feature_extractor.py\n38-feature normalization]
+
+        subgraph ENS[models/behavioral_models.py - Ensemble]
+            GRU[GRU Sequence Model]
+            AE[Autoencoder Detector]
+            OCSVM[One-Class SVM]
+            IFOR[Isolation Forest]
+            KNN[KNN Similarity]
+            PA[Passive-Aggressive Online Learner]
+            FUSE[Ensemble Fusion\nauthenticity_score + confidence + consensus]
+        end
+
+        DRIFT[utils/drift_detector.py\nbaseline + drift score]
+        EXPL[utils/explainer.py\nTop-3 reason generation]
+        TIER[utils/tier_engine.py\nALLOW / STEP_UP / BLOCK]
+    end
+
+    subgraph D[Data Layer]
+        DBM[database/db_manager.py]
+        SQLITE[(SQLite\nusers\nsessions\nbehavioral_data\nauth_events\nmodel_metadata)]
+        MODELSTORE[(models/saved/*\nmodel weights + scalers)]
+    end
+
+    subgraph CFG[Configuration]
+        CONF[config.py\nthresholds, windows, paths, JWT, SocketIO]
+    end
+
+    %% --------------------- User to Client ---------------------
+    USER --> LOGIN
+    USER --> CALIB
+    USER --> DASH
+    ADMIN --> APANEL
+
+    %% --------------------- Client Internal --------------------
+    LOGIN --> RESTCLI
+    LOGIN --> LS
+    CALIB --> KC
+    CALIB --> MC
+    DASH --> KC
+    DASH --> MC
+    DASH --> TC
+
+    KC --> PL
+    MC --> PL
+    TC --> PL
+    PL --> RESTCLI
+    PL --> WSCLI
+
+    %% --------------------- Transport --------------------------
+    RESTCLI --> API
+    WSCLI --> WSEV
+
+    %% --------------------- Backend Core -----------------------
+    WEB --> LOGIN
+    WEB --> CALIB
+    WEB --> DASH
+    WEB --> APANEL
+
+    REG --> DBM
+    LGIN --> AUTH
+    LGOUT --> AUTH
+    SSTAT --> AUTH
+    BDATA --> AUTH
+    CALDONE --> AUTH
+    RISK --> AUTH
+    UDEL --> AUTH
+
+    AUTH --> DBM
+    AUTH --> BUFF
+
+    %% --------------------- Feature + Model Path ---------------
+    BDATA --> FE
+    BEVT --> FE
+    FE --> BUFF
+
+    CALDONE --> FE
+    CALDONE --> ENS
+    CALDONE --> DRIFT
+
+    BUFF --> ENS
+    ENS --> FUSE
+    FUSE --> AUTHRES
+    FUSE --> RISK
+
+    BEVT --> ENS
+    ENS --> AUTHRES
+
+    FE --> DRIFT
+    DRIFT --> DRIFTRES
+    DRIFTREQ --> DRIFT
+
+    RISK --> TIER
+    RISK --> EXPL
+
+    %% --------------------- Persistence ------------------------
+    DBM --> SQLITE
+    CALDONE --> MODELSTORE
+    ENS --> MODELSTORE
+    MODELSTORE --> ENS
+
+    %% --------------------- Dashboard Feedback -----------------
+    AUTHRES --> WSCLI
+    SECALERT --> WSCLI
+    DRIFTRES --> WSCLI
+    WSCLI --> DASH
+
+    RISK --> RESTCLI
+    RESTCLI --> DASH
+
+    %% --------------------- Config wiring ----------------------
+    CONF --> S
+    CONF --> FE
+    CONF --> DRIFT
+    CONF --> ENS
+    CONF --> DBM
+
+    %% --------------------- Admin flow -------------------------
+    APANEL --> RESTCLI
+    RESTCLI --> UDEL
+    UDEL --> DBM
+    UDEL --> SQLITE
+
+    %% --------------------- Styling ----------------------------
+    classDef client fill:#E8F3FF,stroke:#2B6CB0,color:#1A365D;
+    classDef server fill:#F0FFF4,stroke:#2F855A,color:#1C4532;
+    classDef model fill:#FFF5F5,stroke:#C53030,color:#742A2A;
+    classDef data fill:#FAF5FF,stroke:#6B46C1,color:#44337A;
+    classDef conf fill:#FFFBEB,stroke:#B7791F,color:#744210;
+
+    class LOGIN,CALIB,DASH,APANEL,KC,MC,TC,PL,WSCLI,RESTCLI,LS client;
+    class WEB,API,WSEV,AUTH,BUFF,REG,LGIN,LGOUT,SSTAT,BDATA,CALDONE,RISK,UDEL,CONN,JOIN,BEVT,AUTHRES,SECALERT,DRIFTREQ,DRIFTRES server;
+    class FE,GRU,AE,OCSVM,IFOR,KNN,PA,FUSE,DRIFT,EXPL,TIER,ENS model;
+    class DBM,SQLITE,MODELSTORE data;
+    class CONF conf;
