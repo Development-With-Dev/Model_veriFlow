@@ -684,25 +684,40 @@ def create_app(config_name='development'):
     @app.route('/api/behavioral-data', methods=['POST'])
     def receive_behavioral_data():
         """
-        REST endpoint for touch (and generic behavioral) signal collection.
-        Accepts:  { session_id, type, events: [{touch_ms, swipe_px_per_sec, pressure, timestamp}, ...] }
+        REST endpoint for behavioral signal collection.
+
+        Accepts TWO payload shapes:
+          A) Legacy (raw events):
+             { session_id, type, events: [...] }
+          B) Privacy-Layer (on-device processed):
+             { session_id, type, features: {...}, privacy_level: 'high',
+               on_device: true }
+
+        When the Privacy Layer is active the client extracts features
+        on-device and strips raw events before transmission (shape B).
+        The server detects this and skips server-side feature extraction.
+
         Returns:  { success, samples_received, auth_score?, confidence? }
-        Pipeline: JS → Flask → Model → score back
         """
         try:
             data = request.get_json()
             if not data:
                 return jsonify({'error': 'No data provided'}), 400
 
-            session_id = data.get('session_id')
-            data_type = data.get('type', 'touch')     # 'touch', 'keystroke', 'mouse'
-            events = data.get('events', [])
+            session_id    = data.get('session_id')
+            data_type     = data.get('type', 'touch')
+            events        = data.get('events', [])
+            client_feats  = data.get('features')          # on-device features
+            privacy_level = data.get('privacy_level', 'standard')
+            on_device     = data.get('on_device', False)
 
             if not session_id:
                 return jsonify({'error': 'session_id required'}), 400
 
-            if not events:
-                return jsonify({'success': True, 'samples_received': 0, 'message': 'No events'}), 200
+            # Nothing to process: no events AND no pre-computed features
+            if not events and not client_feats:
+                return jsonify({'success': True, 'samples_received': 0,
+                                'message': 'No events or features'}), 200
 
             # Authenticate session
             session_data = authenticate_session(session_id)
@@ -710,57 +725,85 @@ def create_app(config_name='development'):
                 return jsonify({'error': 'Invalid or expired session'}), 401
 
             user_id = session_data['user_id']
+            sample_count = 0
 
-            # Store raw events in database
-            try:
-                # Build a summary features dict from the touch events
-                touch_ms_values   = [e.get('touch_ms', 0) for e in events]
-                swipe_values      = [e.get('swipe_px_per_sec', 0) for e in events]
-                pressure_values   = [e.get('pressure', 0) for e in events]
+            # ── Determine features ───────────────────────────────
+            features = None
 
-                features = {
-                    'touch_ms_mean':          sum(touch_ms_values) / len(touch_ms_values) if touch_ms_values else 0,
-                    'touch_ms_min':           min(touch_ms_values) if touch_ms_values else 0,
-                    'touch_ms_max':           max(touch_ms_values) if touch_ms_values else 0,
-                    'swipe_px_per_sec_mean':  sum(swipe_values) / len(swipe_values) if swipe_values else 0,
-                    'swipe_px_per_sec_max':   max(swipe_values) if swipe_values else 0,
-                    'pressure_mean':          sum(pressure_values) / len(pressure_values) if pressure_values else 0,
-                    'pressure_std':           float(np.std(pressure_values)) if len(pressure_values) > 1 else 0,
-                    'event_count':            len(events)
-                }
-
-                db_manager.store_behavioral_data(
-                    user_id, session_id, data_type, features, events
+            if on_device and client_feats:
+                # ---- Path B: On-device processed (Privacy Layer) ----
+                features = client_feats
+                sample_count = client_feats.get('event_count', 1)
+                logger.info(
+                    f"On-device features received for user {user_id} "
+                    f"(privacy={privacy_level}, battery={data.get('battery_level', '?')})"
                 )
-            except Exception as e:
-                logger.warning(f"Error storing touch data: {e}")
 
-            # Attempt real-time authentication if calibrated
+            elif events:
+                # ---- Path A: Legacy raw events ----------------------
+                sample_count = len(events)
+                try:
+                    touch_ms_values  = [e.get('touch_ms', 0)         for e in events]
+                    swipe_values     = [e.get('swipe_px_per_sec', 0)  for e in events]
+                    pressure_values  = [e.get('pressure', 0)          for e in events]
+
+                    features = {
+                        'touch_ms_mean':         sum(touch_ms_values) / len(touch_ms_values) if touch_ms_values else 0,
+                        'touch_ms_min':          min(touch_ms_values) if touch_ms_values else 0,
+                        'touch_ms_max':          max(touch_ms_values) if touch_ms_values else 0,
+                        'swipe_px_per_sec_mean': sum(swipe_values) / len(swipe_values) if swipe_values else 0,
+                        'swipe_px_per_sec_max':  max(swipe_values) if swipe_values else 0,
+                        'pressure_mean':         sum(pressure_values) / len(pressure_values) if pressure_values else 0,
+                        'pressure_std':          float(np.std(pressure_values)) if len(pressure_values) > 1 else 0,
+                        'event_count':           len(events)
+                    }
+                except Exception as e:
+                    logger.warning(f"Error computing server-side features: {e}")
+
+            # ── Store in database ────────────────────────────────
+            if features:
+                try:
+                    db_manager.store_behavioral_data(
+                        user_id, session_id, data_type,
+                        features,
+                        events if events else None   # None when on-device processed
+                    )
+                except Exception as e:
+                    logger.warning(f"Error storing behavioral data: {e}")
+
+            # ── Real-time authentication ─────────────────────────
             auth_score = None
             confidence = None
 
-            if session_data.get('calibration_complete', False):
+            if features and session_data.get('calibration_complete', False):
                 try:
                     initialize_user_components(user_id)
                     extractor = user_extractors.get(user_id)
                     if extractor:
                         fixed = extractor.fix_feature_dimensions(features)
-                        auth_result = perform_real_time_authentication(user_id, fixed, data_type)
+                        auth_result = perform_real_time_authentication(
+                            user_id, fixed, data_type
+                        )
                         auth_score = auth_result.get('authenticity_score')
                         confidence = auth_result.get('confidence')
                 except Exception as e:
-                    logger.warning(f"Touch auth scoring error: {e}")
+                    logger.warning(f"Auth scoring error: {e}")
 
+            # ── Response ─────────────────────────────────────────
             response = {
                 'success': True,
-                'samples_received': len(events),
-                'data_type': data_type
+                'samples_received': sample_count,
+                'data_type': data_type,
+                'privacy_level': privacy_level
             }
             if auth_score is not None:
                 response['auth_score'] = round(auth_score, 4)
                 response['confidence'] = round(confidence, 4)
 
-            logger.info(f"Received {len(events)} {data_type} events for user {user_id}")
+            logger.info(
+                f"Processed {sample_count} {data_type} samples for user {user_id} "
+                f"(on_device={on_device})"
+            )
             return jsonify(response)
 
         except Exception as e:

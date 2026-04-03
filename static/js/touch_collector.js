@@ -10,6 +10,13 @@
 
 class TouchCollector {
     constructor() {
+        // ── Privacy & Efficiency Layer ──────────────────
+        this.privacy = window.privacyLayer || { 
+            throttle: (f) => f, 
+            filterPayload: (p) => p,
+            extractFeatures: () => ({})
+        };
+
         // ── Touch state ──────────────────────────────────
         this.t0 = 0;           // touchstart timestamp (ms via performance.now)
         this.x0 = 0;           // touchstart X
@@ -38,21 +45,20 @@ class TouchCollector {
         // ── Bind event handlers ──────────────────────────
         this._onTouchStart = this._onTouchStart.bind(this);
         this._onTouchEnd   = this._onTouchEnd.bind(this);
-        this._onTouchMove  = this._onTouchMove.bind(this);
+        
+        // Efficiency: Throttle touchmove to 60fps or lower (100ms)
+        this._onTouchMove  = this.privacy.throttle(this._onTouchMove.bind(this), 50);
 
         this._attach();
         this._startFlushLoop();
 
-        console.log('📱 TouchCollector initialised');
+        console.log('📱 TouchCollector initialised with Privacy Layer');
     }
 
     /* ===================================================================
      * EVENT HANDLERS
      * =================================================================*/
 
-    /**
-     * touchstart → save t0, x0, y0
-     */
     _onTouchStart(e) {
         const touch = e.changedTouches[0];
         this.t0           = performance.now();
@@ -63,48 +69,31 @@ class TouchCollector {
         this.lastMoveY    = touch.clientY;
     }
 
-    /**
-     * touchend → calc duration = t1 - t0, compute swipe speed & mock pressure
-     */
     _onTouchEnd(e) {
         const t1 = performance.now();
         const touch = e.changedTouches[0];
 
-        // ── Duration (ms) ────────────────────────────────
         const duration = t1 - this.t0;
         this.lastTouchMs = Math.round(duration);
 
-        // ── Final straight-line distance (fallback if no moves) ──
         if (this.moveDistance === 0) {
             const dx = touch.clientX - this.x0;
             const dy = touch.clientY - this.y0;
             this.moveDistance = Math.sqrt(dx * dx + dy * dy);
         }
 
-        // ── Swipe speed (px / sec) ──────────────────────
-        const durationSec = duration / 1000 || 0.001;   // avoid /0
+        const durationSec = duration / 1000 || 0.001; 
         this.lastSwipePxPerSec = parseFloat((this.moveDistance / durationSec).toFixed(2));
-
-        // ── Mock pressure ────────────────────────────────
         this.lastPressure = parseFloat((0.72 + Math.random() * 0.2).toFixed(4));
 
-        // ── Push to buffer ───────────────────────────────
         this.buffer.push({
             touch_ms:          this.lastTouchMs,
             swipe_px_per_sec:  this.lastSwipePxPerSec,
             pressure:          this.lastPressure,
             timestamp:         Date.now()
         });
-
-        console.log(
-            `🖐️  touch  dur=${this.lastTouchMs}ms  swipe=${this.lastSwipePxPerSec}px/s  ` +
-            `pressure=${this.lastPressure}`
-        );
     }
 
-    /**
-     * touchmove → accumulate swipe distance
-     */
     _onTouchMove(e) {
         const touch = e.changedTouches[0];
         const dx = touch.clientX - this.lastMoveX;
@@ -125,11 +114,16 @@ class TouchCollector {
     async _flush() {
         if (this.buffer.length === 0) return;
 
-        const payload = {
+        let payload = {
             session_id: this.sessionId,
             type:       'touch',
             events:     this.buffer.splice(0)   // drain buffer
         };
+
+        // 🛡️ Privacy & Efficiency: Extract features and strip raw data
+        if (this.privacy.filterPayload) {
+            payload = this.privacy.filterPayload(payload);
+        }
 
         try {
             const res = await fetch(this.API_ENDPOINT, {
@@ -142,16 +136,12 @@ class TouchCollector {
                 console.warn('⚠️  TouchCollector POST failed:', res.status);
             } else {
                 const data = await res.json();
-                console.log('✅  Touch data accepted:', data);
+                console.log('✅  Touch data accepted (Privacy Level: ' + (payload.privacy_level || 'standard') + ')');
             }
         } catch (err) {
             console.error('❌  TouchCollector network error:', err);
         }
     }
-
-    /* ===================================================================
-     * LIFECYCLE
-     * =================================================================*/
 
     _attach() {
         document.addEventListener('touchstart', this._onTouchStart, { passive: true });
@@ -164,11 +154,10 @@ class TouchCollector {
         document.removeEventListener('touchstart', this._onTouchStart);
         document.removeEventListener('touchend',   this._onTouchEnd);
         document.removeEventListener('touchmove',  this._onTouchMove);
-        // Flush remaining buffer one last time
         this._flush();
         console.log('📱 TouchCollector destroyed');
     }
 }
 
-// ── Auto-initialise ──────────────────────────────────────────────────
 window.touchCollector = new TouchCollector();
+

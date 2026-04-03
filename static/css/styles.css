@@ -212,6 +212,14 @@ body::before {
     background: rgba(255, 255, 255, 0.08);
 }
 
+.setting-hint {
+    font-size: var(--font-size-xs);
+    color: var(--text-muted);
+    margin-top: -8px;
+    margin-bottom: var(--spacing-md);
+    padding-left: 28px;
+}
+
 .form-group input::placeholder,
 .form-group textarea::placeholder {
     color: var(--text-muted);

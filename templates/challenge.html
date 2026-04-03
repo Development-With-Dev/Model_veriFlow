@@ -409,18 +409,25 @@
                             </div>
                         </div>
 
-                        <div class="settings-card sensitivity-settings">
-                            <h3>Sensitivity Settings</h3>
+                        <div class="settings-card privacy-efficiency-settings">
+                            <h3>🛡️ Privacy & Efficiency</h3>
                             <div class="setting-group">
+                                <label class="setting-label">
+                                    <input type="checkbox" id="onDeviceProcessing" checked>
+                                    <span>On-Device Processing (Privacy)</span>
+                                </label>
+                                <p class="setting-hint">Extract features locally, never send raw signals.</p>
+                                
+                                <label class="setting-label">
+                                    <input type="checkbox" id="lowBatteryMode">
+                                    <span>Low Battery Mode (Efficiency)</span>
+                                </label>
+                                <p class="setting-hint">Reduces sampling frequency for lower resource consumption.</p>
+
                                 <div class="slider-setting">
-                                    <label>Authentication Threshold</label>
-                                    <input type="range" id="authThreshold" min="0.1" max="1.0" step="0.1" value="0.7">
-                                    <span class="slider-value">0.7</span>
-                                </div>
-                                <div class="slider-setting">
-                                    <label>Anomaly Sensitivity</label>
-                                    <input type="range" id="anomalySensitivity" min="0.1" max="1.0" step="0.1" value="0.8">
-                                    <span class="slider-value">0.8</span>
+                                    <label>Sampling Frequency</label>
+                                    <input type="range" id="samplingFreq" min="10" max="200" step="10" value="50">
+                                    <span class="slider-value">50ms</span>
                                 </div>
                             </div>
                         </div>
@@ -507,6 +514,7 @@
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
+    <script src="{{ url_for('static', filename='js/privacy_layer.js') }}"></script>
     <script src="{{ url_for('static', filename='js/touch_collector.js') }}"></script>
     <script src="{{ url_for('static', filename='js/challenge.js') }}"></script>
 </body>

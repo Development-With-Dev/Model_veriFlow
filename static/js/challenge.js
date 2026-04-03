@@ -190,6 +190,9 @@ class DashboardManager {
         this.userId = localStorage.getItem('user_id');
         this.username = localStorage.getItem('username');
         
+        // ── Privacy & Efficiency Layer (global singleton) ────
+        this.privacy = window.privacyLayer || null;
+
         // Real-time monitoring state
         this.isMonitoring = false;
         this.behavioralBuffer = {
@@ -282,12 +285,15 @@ class DashboardManager {
         this.exportLogs = document.getElementById('exportLogs');
         this.testBehavior = document.getElementById('testBehavior');
         
-        // Settings
+        // Settings — Security
         this.enableRealTimeAuth = document.getElementById('enableRealTimeAuth');
         this.enableAnomalyAlerts = document.getElementById('enableAnomalyAlerts');
         this.enableDriftDetection = document.getElementById('enableDriftDetection');
-        this.authThreshold = document.getElementById('authThreshold');
-        this.anomalySensitivity = document.getElementById('anomalySensitivity');
+
+        // Settings — Privacy & Efficiency
+        this.onDeviceProcessingEl = document.getElementById('onDeviceProcessing');
+        this.lowBatteryModeEl     = document.getElementById('lowBatteryMode');
+        this.samplingFreqEl       = document.getElementById('samplingFreq');
         
         // Modals
         this.securityAlertModal = document.getElementById('securityAlertModal');
@@ -338,16 +344,19 @@ class DashboardManager {
         this.activityFilter.addEventListener('change', () => this.loadActivityLog());
         this.dateFilter.addEventListener('change', () => this.loadActivityLog());
         
-        // Settings
-        this.authThreshold.addEventListener('input', (e) => {
-            e.target.nextElementSibling.textContent = e.target.value;
-            this.updateSettings();
-        });
-        
-        this.anomalySensitivity.addEventListener('input', (e) => {
-            e.target.nextElementSibling.textContent = e.target.value;
-            this.updateSettings();
-        });
+        // Settings — Privacy & Efficiency
+        if (this.onDeviceProcessingEl) {
+            this.onDeviceProcessingEl.addEventListener('change', () => this.updateSettings());
+        }
+        if (this.lowBatteryModeEl) {
+            this.lowBatteryModeEl.addEventListener('change', () => this.updateSettings());
+        }
+        if (this.samplingFreqEl) {
+            this.samplingFreqEl.addEventListener('input', (e) => {
+                e.target.nextElementSibling.textContent = e.target.value + 'ms';
+                this.updateSettings();
+            });
+        }
         
         // Real-time monitoring events
         document.addEventListener('keydown', (e) => this.captureKeystroke(e));
@@ -649,6 +658,9 @@ class DashboardManager {
 
     captureKeystroke(e) {
         if (!this.isMonitoring) return;
+
+        // Efficiency: probabilistic sampling via Privacy Layer
+        if (this.privacy && !this.privacy.shouldSample()) return;
         
         const keystroke = {
             key: e.key,
@@ -686,6 +698,9 @@ class DashboardManager {
 
     captureMouseMovement(e) {
         if (!this.isMonitoring) return;
+
+        // Efficiency: probabilistic sampling via Privacy Layer
+        if (this.privacy && !this.privacy.shouldSample()) return;
         
         const mouseEvent = {
             type: 'move',
@@ -811,11 +826,16 @@ class DashboardManager {
     async sendTouchData() {
         if (this.behavioralBuffer.touch.length === 0) return;
 
-        const payload = {
+        let payload = {
             session_id: this.sessionId,
             type:       'touch',
             events:     this.behavioralBuffer.touch.splice(0)
         };
+
+        // 🛡️ Privacy Layer: extract features on-device & strip raw events
+        if (this.privacy) {
+            payload = this.privacy.filterPayload(payload);
+        }
 
         try {
             const res = await fetch('/api/behavioral-data', {
@@ -827,7 +847,7 @@ class DashboardManager {
                 console.warn('⚠️  Touch POST failed:', res.status);
             } else {
                 const data = await res.json();
-                console.log('✅  Touch data accepted:', data);
+                console.log('✅  Touch data accepted (privacy=' + (payload.privacy_level || 'standard') + ')');
             }
         } catch (err) {
             console.error('❌  Touch POST error:', err);
@@ -836,11 +856,18 @@ class DashboardManager {
 
     sendBehavioralData(type, data) {
         if (this.socket && data.length > 0) {
-            this.socket.emit('behavioral_data', {
+            let payload = {
                 type: type,
                 events: data,
                 timestamp: Date.now()
-            });
+            };
+
+            // 🛡️ Privacy Layer: on-device feature extraction for WebSocket data
+            if (this.privacy) {
+                payload = this.privacy.filterPayload(payload);
+            }
+
+            this.socket.emit('behavioral_data', payload);
         }
     }
 
@@ -1399,7 +1426,38 @@ class DashboardManager {
     }
 
     updateSettings() {
-        console.log('Settings updated');
+        if (!this.privacy) {
+            console.log('Settings updated (no Privacy Layer)');
+            return;
+        }
+
+        const newSettings = {};
+
+        // On-device processing toggle
+        if (this.onDeviceProcessingEl) {
+            const on = this.onDeviceProcessingEl.checked;
+            newSettings.onDeviceProcessing = on;
+            newSettings.dataMinimization   = on;  // coupled
+        }
+
+        // Low battery mode toggle
+        if (this.lowBatteryModeEl) {
+            newSettings.lowBatteryMode = this.lowBatteryModeEl.checked;
+        }
+
+        // Sampling frequency slider → throttle interval
+        if (this.samplingFreqEl) {
+            newSettings.throttleMs = parseInt(this.samplingFreqEl.value, 10) || 50;
+        }
+
+        this.privacy.applySettings(newSettings);
+
+        // Also update the TouchCollector flush interval when low-battery
+        if (window.touchCollector) {
+            window.touchCollector.POST_INTERVAL_MS = this.privacy.settings.flushIntervalMs;
+        }
+
+        console.log('⚙️  Settings pushed to Privacy Layer', newSettings);
     }
 
     loadAnalyticsData() {
