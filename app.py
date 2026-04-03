@@ -26,6 +26,7 @@ from utils.feature_extractor import BehavioralFeatureExtractor
 from utils.drift_detector import BehavioralDriftDetector
 from models.behavioral_models import EnsembleBehavioralClassifier
 from utils.tier_engine import resolve_tier
+from utils.explainer import explain as explain_risk
 
 # Configure logging
 logging.basicConfig(
@@ -130,6 +131,10 @@ def create_app(config_name='development'):
     @app.route('/challenge')
     def challenge():
         return render_template('challenge.html')
+    
+    @app.route('/admin')
+    def admin():
+        return render_template('admin.html')
     
     # =========================================================================
     # API ROUTES
@@ -899,6 +904,22 @@ def create_app(config_name='development'):
                     active_sessions[session_id]['consecutive_anomalies'] = prev + 1
             consecutive_anomalies = active_sessions.get(session_id, {}).get('consecutive_anomalies', 0)
 
+            # --- Explain: top-3 behavioural deviations in plain English ---
+            reasons = []
+            try:
+                if user_id in user_extractors:
+                    extractor = user_extractors[user_id]
+                    # Baseline = extractor's default values (calibrated centre)
+                    baseline_features = {**extractor._get_empty_keystroke_features(),
+                                         **extractor._get_empty_mouse_features()}
+                    # Current = most recent feature snapshot
+                    recent = list(behavioral_buffers[user_id]['recent_features'])
+                    if recent:
+                        current_features = extractor.fix_feature_dimensions(recent[-1])
+                        reasons = explain_risk(current_features, baseline_features, top_n=3)
+            except Exception as e:
+                logger.warning(f"Explainer error: {e}")
+
             # --- Log the assessment ---
             try:
                 db_manager.log_auth_event(
@@ -934,6 +955,7 @@ def create_app(config_name='development'):
                 'tier':                 tier,
                 'consecutive_anomalies': consecutive_anomalies,
                 'multipliers_fired':    multipliers_fired,
+                'reasons':              reasons,
                 'input': {
                     'amount':             amount,
                     'recipient_type':     recipient_type,
@@ -946,6 +968,69 @@ def create_app(config_name='development'):
             logger.error(f"Risk assessment error: {str(e)}")
             traceback.print_exc()
             return jsonify({'error': 'Risk assessment failed'}), 500
+
+    # =========================================================================
+    # USER DATA DELETION
+    # =========================================================================
+
+    @app.route('/api/user-data', methods=['DELETE'])
+    def delete_user_data():
+        """
+        Delete a user's behavioural profile and all associated data.
+        Body: { session_id, target_user? }
+        If target_user is omitted, deletes the calling user's own data.
+        """
+        try:
+            data = request.get_json()
+            if not data:
+                return jsonify({'error': 'No data provided'}), 400
+
+            session_id  = data.get('session_id')
+            target_user = data.get('target_user')  # optional: admin deleting another user
+
+            if not session_id:
+                return jsonify({'error': 'session_id required'}), 400
+
+            session_data = authenticate_session(session_id)
+            if not session_data:
+                return jsonify({'error': 'Invalid or expired session'}), 401
+
+            caller_id = session_data['user_id']
+
+            # Resolve whose data to delete
+            if target_user:
+                # In production, verify admin privileges here
+                user_to_delete = target_user
+            else:
+                user_to_delete = caller_id
+
+            # Purge in-memory caches
+            for store in [user_models, user_extractors, user_drift_detectors, behavioral_buffers]:
+                store.pop(user_to_delete, None)
+
+            # Purge database records
+            deleted_rows = 0
+            try:
+                deleted_rows = db_manager.delete_user_data(user_to_delete)
+            except Exception as e:
+                logger.warning(f"DB delete for {user_to_delete}: {e}")
+
+            # If deleting self, invalidate the session
+            if user_to_delete == caller_id:
+                active_sessions.pop(session_id, None)
+
+            logger.info(f"Deleted profile for user={user_to_delete} by caller={caller_id} ({deleted_rows} rows)")
+
+            return jsonify({
+                'success': True,
+                'deleted_user': user_to_delete,
+                'rows_removed': deleted_rows
+            })
+
+        except Exception as e:
+            logger.error(f"User data deletion error: {str(e)}")
+            traceback.print_exc()
+            return jsonify({'error': 'Deletion failed'}), 500
 
     @socketio.on('connect')
     def handle_connect():

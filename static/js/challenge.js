@@ -1544,5 +1544,252 @@ document.addEventListener('DOMContentLoaded', () => {
             statusText.textContent = 'High Risk';
             statusDot.className = 'status-dot red';
         }
+
+        // ── Also update the Trust Ring with the auth score ──
+        updateTrustRing(authScore);
     });
+});
+
+/* =========================================================================
+ *  TRUST RING — animated SVG ring, colour by tier, label "Trust: XX%"
+ * ========================================================================= */
+
+const RING_CIRCUMFERENCE = 2 * Math.PI * 70; // r = 70 → 439.82
+
+function updateTrustRing(score) {
+    const pct      = Math.round(score * 100);
+    const offset   = RING_CIRCUMFERENCE * (1 - score);
+
+    // Colour by tier thresholds
+    let colour;
+    if (score > 0.75) colour = '#10b981';      // green
+    else if (score >= 0.45) colour = '#f59e0b'; // amber
+    else colour = '#ef4444';                     // red
+
+    const arc   = document.getElementById('trustRingArc');
+    const label = document.getElementById('trustPct');
+    const badge = document.getElementById('trustTierBadge');
+
+    if (arc) {
+        arc.setAttribute('stroke-dashoffset', offset.toFixed(2));
+        arc.setAttribute('stroke', colour);
+    }
+    if (label) label.textContent = pct + '%';
+
+    // Tier badge text + class
+    let tierText, tierClass;
+    if (score > 0.75) {
+        tierText = 'ALLOW'; tierClass = 'tier-allow';
+    } else if (score >= 0.45) {
+        tierText = 'STEP_UP'; tierClass = 'tier-stepup';
+    } else {
+        tierText = 'BLOCK'; tierClass = 'tier-block';
+    }
+    if (badge) {
+        badge.textContent = tierText;
+        badge.className   = 'trust-tier-badge ' + tierClass;
+    }
+}
+
+// Refresh the ring every 3 seconds with the latest auth score
+setInterval(() => {
+    const raw = document.getElementById('authScore');
+    if (raw) {
+        const val = parseFloat(raw.textContent) || 0;
+        updateTrustRing(val);
+    }
+}, 3000);
+
+// Initial paint
+updateTrustRing(0.87);
+
+/* =========================================================================
+ *  TRANSFER FORM → POST /api/risk, handle tier response
+ * ========================================================================= */
+
+document.getElementById('transferForm')?.addEventListener('submit', async function(e) {
+    e.preventDefault();
+
+    const amount        = parseFloat(document.getElementById('transferAmount').value) || 0;
+    const recipientType = document.getElementById('recipientType').value;
+    const sessionId     = localStorage.getItem('session_id') || '';
+    const hour          = new Date().getHours();
+    const resultDiv     = document.getElementById('transferResult');
+
+    // Disable button while in-flight
+    const btn = document.getElementById('transferBtn');
+    btn.disabled = true;
+    btn.innerHTML = '<div class="spinner" style="width:18px;height:18px;border-width:2px;display:inline-block;"></div> Verifying…';
+
+    try {
+        const res = await fetch('/api/risk', {
+            method:  'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body:    JSON.stringify({
+                session_id:         sessionId,
+                amount:             amount,
+                recipient_type:     recipientType,
+                hour:               hour,
+                device_seen_before: true      // placeholder for real device fingerprint
+            })
+        });
+
+        const data = await res.json();
+
+        if (!res.ok) {
+            showTransferResult(resultDiv, 'error', data.error || 'Risk check failed');
+            return;
+        }
+
+        // Update Trust Ring with adjusted score
+        updateTrustRing(data.adjusted_score);
+
+        // Render explainability reasons
+        renderExplainCard(data.reasons || []);
+
+        // React to tier
+        const tier = data.tier || 'ALLOW';
+        if (tier === 'ALLOW') {
+            showTransferResult(resultDiv, 'success',
+                `✅ Approved  —  Trust ${Math.round(data.adjusted_score * 100)}%`);
+        } else if (tier === 'STEP_UP') {
+            showTransferResult(resultDiv, 'warning',
+                `⚠️ Step-Up required  —  Trust ${Math.round(data.adjusted_score * 100)}%`);
+            showOtpModal();
+        } else {   // BLOCK
+            showBlockOverlay(data);
+        }
+    } catch (err) {
+        console.error('Risk call error:', err);
+        showTransferResult(resultDiv, 'error', '❌ Network error');
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fas fa-shield-alt"></i> Verify & Send';
+    }
+});
+
+function showTransferResult(el, type, msg) {
+    if (!el) return;
+    el.style.display = 'block';
+    el.className = type === 'success' ? 'success-message'
+                 : type === 'warning' ? 'error-message'   // re-use style, amber colour below
+                 : 'error-message';
+    if (type === 'warning') {
+        el.style.background = 'rgba(245,158,11,0.1)';
+        el.style.borderColor = 'rgba(245,158,11,0.3)';
+        el.style.color = '#fbbf24';
+    }
+    el.textContent = msg;
+}
+
+/* =========================================================================
+ *  EXPLAINABILITY CARD — render top-3 reasons with delta bars
+ * ========================================================================= */
+
+function renderExplainCard(reasons) {
+    const container = document.getElementById('explainRows');
+    if (!container) return;
+
+    if (!reasons || reasons.length === 0) {
+        container.innerHTML = `
+            <div class="explain-row placeholder-row">
+                <span class="explain-label">No deviations detected</span>
+                <div class="explain-bar-track"><div class="explain-bar-fill bar-green" style="width:100%"></div></div>
+                <span class="explain-delta" style="color:#10b981">✓</span>
+            </div>`;
+        return;
+    }
+
+    container.innerHTML = reasons.map(r => {
+        const absPct  = Math.min(Math.abs(r.delta_pct), 100);
+        const barCls  = absPct > 50 ? 'bar-red' : absPct > 25 ? 'bar-amber' : 'bar-green';
+        const deltaCls = r.delta_pct < 0 ? 'delta-negative' : 'delta-positive';
+        const sign     = r.delta_pct >= 0 ? '+' : '';
+
+        return `
+            <div class="explain-row">
+                <span class="explain-label">${r.label}</span>
+                <div class="explain-bar-track">
+                    <div class="explain-bar-fill ${barCls}" style="width:${absPct}%"></div>
+                </div>
+                <span class="explain-delta ${deltaCls}">${sign}${r.delta_pct}%</span>
+            </div>`;
+    }).join('');
+}
+
+/* =========================================================================
+ *  OTP STEP-UP MODAL — slide in, blur background, auto-focus digits
+ * ========================================================================= */
+
+function showOtpModal() {
+    const backdrop = document.getElementById('otpBackdrop');
+    if (!backdrop) return;
+    backdrop.classList.add('active');
+
+    // Auto-focus first digit
+    const digits = backdrop.querySelectorAll('.otp-digit');
+    if (digits[0]) digits[0].focus();
+
+    // Auto-advance on input
+    digits.forEach((inp, i) => {
+        inp.value = '';
+        inp.addEventListener('input', () => {
+            if (inp.value.length === 1 && i < digits.length - 1) {
+                digits[i + 1].focus();
+            }
+        });
+        inp.addEventListener('keydown', (e) => {
+            if (e.key === 'Backspace' && inp.value === '' && i > 0) {
+                digits[i - 1].focus();
+            }
+        });
+    });
+}
+
+function hideOtpModal() {
+    const backdrop = document.getElementById('otpBackdrop');
+    if (backdrop) backdrop.classList.remove('active');
+}
+
+// Submit OTP (mock verification)
+document.getElementById('otpSubmitBtn')?.addEventListener('click', () => {
+    const digits = document.querySelectorAll('.otp-digit');
+    const code   = Array.from(digits).map(d => d.value).join('');
+    if (code.length === 6) {
+        console.log('OTP submitted:', code);
+        hideOtpModal();
+        const resultDiv = document.getElementById('transferResult');
+        showTransferResult(resultDiv, 'success', '✅ OTP verified — transfer approved');
+    }
+});
+
+// Resend OTP link
+document.getElementById('otpResend')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    console.log('OTP resent');
+    alert('A new OTP has been sent to your registered device.');
+});
+
+/* =========================================================================
+ *  BLOCK OVERLAY — full red overlay, "Session Suspended" card
+ * ========================================================================= */
+
+function showBlockOverlay(data) {
+    const overlay = document.getElementById('blockOverlay');
+    const meta    = document.getElementById('blockMeta');
+    if (!overlay) return;
+
+    if (meta && data) {
+        meta.innerHTML = `
+            <div>Risk Level: <span>${(data.risk_level || 'critical').toUpperCase()}</span></div>
+            <div>Anomalies: <span>${data.consecutive_anomalies || '—'}</span></div>`;
+    }
+
+    overlay.classList.add('active');
+}
+
+// BLOCK overlay → return to login
+document.getElementById('blockLogoutBtn')?.addEventListener('click', () => {
+    localStorage.clear();
+    window.location.href = '/login';
 });

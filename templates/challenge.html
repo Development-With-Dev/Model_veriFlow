@@ -100,7 +100,10 @@
                         <span class="status-text" id="statusText">Monitoring...</span>
                     </div>
 
-                    <!-- Notifications -->
+                    <!-- Admin Link -->
+                    <a href="/admin" class="btn btn-secondary" style="font-size:var(--font-size-sm);padding:var(--spacing-sm) var(--spacing-md);">
+                        <i class="fas fa-user-shield"></i> Admin View
+                    </a>
                     <div class="notifications" id="notifications">
                         <button class="notification-btn" id="notificationBtn">
                             <i class="fas fa-bell"></i>
@@ -127,7 +130,7 @@
                 <!-- Dashboard Section -->
                 <section class="content-section active" id="dashboardSection">
                     <div class="dashboard-grid">
-                        <!-- Security Overview -->
+                        <!-- ══════ Trust Ring + Security Overview ══════ -->
                         <div class="dashboard-card security-overview">
                             <div class="card-header">
                                 <h3>Security Overview</h3>
@@ -138,12 +141,35 @@
                                 </div>
                             </div>
                             <div class="card-content">
-                                <div class="security-score">
-                                    <div class="score-circle" id="securityScoreCircle">
-                                        <span class="score-value" id="securityScore">--</span>
-                                        <span class="score-label">Security Score</span>
+                                <!-- Animated SVG Trust Ring -->
+                                <div class="trust-ring-wrapper">
+                                    <svg class="trust-ring-svg" viewBox="0 0 160 160" id="trustRingSvg">
+                                        <!-- Background track -->
+                                        <circle cx="80" cy="80" r="70" fill="none"
+                                                stroke="rgba(255,255,255,0.08)" stroke-width="12"/>
+                                        <!-- Animated coloured arc -->
+                                        <circle cx="80" cy="80" r="70" fill="none"
+                                                stroke="#10b981" stroke-width="12"
+                                                stroke-linecap="round"
+                                                stroke-dasharray="439.82" stroke-dashoffset="66"
+                                                transform="rotate(-90 80 80)"
+                                                id="trustRingArc"
+                                                class="trust-ring-arc"/>
+                                        <!-- Glow filter -->
+                                        <defs>
+                                            <filter id="ringGlow">
+                                                <feGaussianBlur stdDeviation="4" result="blur"/>
+                                                <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+                                            </filter>
+                                        </defs>
+                                    </svg>
+                                    <div class="trust-ring-label">
+                                        <span class="trust-pct" id="trustPct">87%</span>
+                                        <span class="trust-word">Trust</span>
                                     </div>
+                                    <span class="trust-tier-badge" id="trustTierBadge">ALLOW</span>
                                 </div>
+
                                 <div class="security-metrics">
                                     <div class="metric">
                                         <span class="metric-label">Authentication Score</span>
@@ -161,7 +187,50 @@
                             </div>
                         </div>
 
-                        <!-- Real-time Monitoring -->
+                        <!-- ══════ Explainability Card ══════ -->
+                        <div class="dashboard-card explainability-card" id="explainabilityCard">
+                            <div class="card-header">
+                                <h3><i class="fas fa-brain"></i> Why this score?</h3>
+                            </div>
+                            <div class="card-content">
+                                <div class="explain-rows" id="explainRows">
+                                    <!-- Row template (JS fills up to 3) -->
+                                    <div class="explain-row placeholder-row">
+                                        <span class="explain-label">Waiting for data…</span>
+                                        <div class="explain-bar-track"><div class="explain-bar-fill" style="width:0%"></div></div>
+                                        <span class="explain-delta">—</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- ══════ Transfer Form ══════ -->
+                        <div class="dashboard-card transfer-card">
+                            <div class="card-header">
+                                <h3><i class="fas fa-paper-plane"></i> Quick Transfer</h3>
+                            </div>
+                            <div class="card-content">
+                                <form id="transferForm" autocomplete="off">
+                                    <div class="form-group">
+                                        <label><i class="fas fa-rupee-sign"></i> Amount</label>
+                                        <input type="number" id="transferAmount" placeholder="e.g. 25000" min="1" required/>
+                                    </div>
+                                    <div class="form-group">
+                                        <label><i class="fas fa-user"></i> Recipient</label>
+                                        <select id="recipientType">
+                                            <option value="known">Known recipient</option>
+                                            <option value="new">New recipient</option>
+                                        </select>
+                                    </div>
+                                    <button type="submit" class="btn btn-primary" id="transferBtn" style="width:100%">
+                                        <i class="fas fa-shield-alt"></i> Verify &amp; Send
+                                    </button>
+                                    <div id="transferResult" style="margin-top:var(--spacing-md);display:none;"></div>
+                                </form>
+                            </div>
+                        </div>
+
+                        <!-- ══════ Real-time Monitoring ══════ -->
                         <div class="dashboard-card real-time-monitor">
                             <div class="card-header">
                                 <h3>Real-time Monitoring</h3>
@@ -189,7 +258,7 @@
                             </div>
                         </div>
 
-                        <!-- Recent Activity -->
+                        <!-- ══════ Recent Activity ══════ -->
                         <div class="dashboard-card recent-activity">
                             <div class="card-header">
                                 <h3>Recent Activity</h3>
@@ -210,7 +279,7 @@
                             </div>
                         </div>
 
-                        <!-- Quick Actions -->
+                        <!-- ══════ Quick Actions ══════ -->
                         <div class="dashboard-card quick-actions">
                             <div class="card-header">
                                 <h3>Quick Actions</h3>
@@ -397,6 +466,42 @@
                 <button id="startTest">Start Test</button>
                 <button id="stopTest">Stop Test</button>
             </div>
+        </div>
+    </div>  
+
+    <!-- ══════ STEP_UP: OTP Slide-In Modal ══════ -->
+    <div class="otp-backdrop" id="otpBackdrop">
+        <div class="otp-modal" id="otpModal">
+            <div class="otp-icon"><i class="fas fa-lock"></i></div>
+            <h3>Step-Up Verification Required</h3>
+            <p>Your current session risk is elevated. Please enter the OTP sent to your registered device.</p>
+            <div class="otp-inputs" id="otpInputs">
+                <input type="text" maxlength="1" class="otp-digit" data-idx="0" autofocus/>
+                <input type="text" maxlength="1" class="otp-digit" data-idx="1"/>
+                <input type="text" maxlength="1" class="otp-digit" data-idx="2"/>
+                <input type="text" maxlength="1" class="otp-digit" data-idx="3"/>
+                <input type="text" maxlength="1" class="otp-digit" data-idx="4"/>
+                <input type="text" maxlength="1" class="otp-digit" data-idx="5"/>
+            </div>
+            <button class="btn btn-primary" id="otpSubmitBtn" style="width:100%;margin-top:var(--spacing-lg);">
+                <i class="fas fa-check-circle"></i> Verify OTP
+            </button>
+            <p class="otp-resend">Didn't receive it? <a href="#" id="otpResend">Resend OTP</a></p>
+        </div>
+    </div>
+
+    <!-- ══════ BLOCK: Session Suspended Overlay ══════ -->
+    <div class="block-overlay" id="blockOverlay">
+        <div class="block-card">
+            <div class="block-icon-ring">
+                <i class="fas fa-ban"></i>
+            </div>
+            <h2>Session Suspended</h2>
+            <p>We detected anomalous behaviour that does not match your profile. For your security this session has been locked.</p>
+            <div class="block-meta" id="blockMeta"></div>
+            <button class="btn btn-danger" id="blockLogoutBtn" style="width:100%;margin-top:var(--spacing-xl);">
+                <i class="fas fa-sign-out-alt"></i> Return to Login
+            </button>
         </div>
     </div>
 

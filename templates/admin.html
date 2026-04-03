@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Panel - SecureAuth</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <style>
+        /* ── Admin-specific overrides ──────────────────────────────── */
+        .admin-container {
+            max-width: 1280px;
+            margin: 0 auto;
+            padding: var(--spacing-xl) var(--spacing-lg);
+            animation: fadeIn 0.5s ease-out;
+        }
+
+        /* Top bar */
+        .admin-topbar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: var(--spacing-2xl);
+            flex-wrap: wrap;
+            gap: var(--spacing-md);
+        }
+        .admin-topbar .logo { justify-content: flex-start; margin-bottom: 0; }
+        .admin-topbar .logo i { font-size: var(--font-size-2xl); }
+        .admin-topbar .logo span {
+            font-size: var(--font-size-2xl); font-weight: 700;
+            background: var(--primary-gradient);
+            -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        .admin-topbar-right { display:flex; gap:var(--spacing-md); align-items:center; }
+
+        /* Stats row */
+        .admin-stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: var(--spacing-lg);
+            margin-bottom: var(--spacing-2xl);
+        }
+        .admin-stat-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-xl);
+            padding: var(--spacing-xl);
+            backdrop-filter: blur(12px);
+        }
+        .admin-stat-card h4 { color:var(--text-muted); font-size:var(--font-size-xs); text-transform:uppercase; letter-spacing:1.2px; margin-bottom:var(--spacing-sm); }
+        .admin-stat-card .stat-big { font-size:var(--font-size-3xl); font-weight:700; }
+        .stat-green { color:#10b981; }
+        .stat-amber { color:#f59e0b; }
+        .stat-red   { color:#ef4444; }
+
+        /* Flagged sessions table */
+        .flagged-table-wrap {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-xl);
+            overflow: hidden;
+            backdrop-filter: blur(12px);
+        }
+        .flagged-table-wrap .card-header {
+            display:flex; justify-content:space-between; align-items:center;
+            padding: var(--spacing-lg) var(--spacing-xl);
+            border-bottom: 1px solid var(--border-color);
+        }
+        .flagged-table-wrap .card-header h3 { font-size:var(--font-size-lg); }
+
+        .flagged-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        .flagged-table th {
+            text-align: left;
+            padding: var(--spacing-md) var(--spacing-xl);
+            font-size: var(--font-size-xs);
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            border-bottom: 1px solid var(--border-color);
+        }
+        .flagged-table td {
+            padding: var(--spacing-md) var(--spacing-xl);
+            border-bottom: 1px solid var(--border-color);
+            font-size: var(--font-size-sm);
+            color: var(--text-secondary);
+            vertical-align: middle;
+        }
+        .flagged-table tbody tr {
+            cursor: pointer;
+            transition: background 0.2s ease;
+        }
+        .flagged-table tbody tr:hover { background: rgba(255,255,255,0.03); }
+        .flagged-table tbody tr.expanded { background: rgba(99,102,241,0.06); }
+
+        /* Tier badges in table */
+        .tier-pill {
+            display: inline-block;
+            padding: 3px 12px;
+            border-radius: var(--radius-2xl);
+            font-size: var(--font-size-xs);
+            font-weight: 700;
+            letter-spacing: 1px;
+        }
+        .tier-pill.allow   { background:rgba(16,185,129,0.15); color:#10b981; }
+        .tier-pill.stepup  { background:rgba(245,158,11,0.15); color:#f59e0b; }
+        .tier-pill.block   { background:rgba(239,68,68,0.15);  color:#ef4444; }
+
+        /* Expanded timeline row */
+        .timeline-row td {
+            padding: 0 !important;
+            border-bottom: 1px solid var(--border-color);
+        }
+        .timeline-panel {
+            overflow: hidden;
+            max-height: 0;
+            transition: max-height 0.4s ease, padding 0.3s ease;
+            padding: 0 var(--spacing-xl);
+        }
+        .timeline-panel.open {
+            max-height: 400px;
+            padding: var(--spacing-xl);
+        }
+        .timeline-panel canvas { width:100% !important; height:180px !important; }
+
+        .timeline-actions {
+            display: flex;
+            gap: var(--spacing-md);
+            margin-top: var(--spacing-lg);
+        }
+
+        /* Confirm overlay */
+        .confirm-overlay {
+            position: fixed; inset: 0;
+            background: rgba(15,23,42,0.7);
+            backdrop-filter: blur(8px);
+            z-index: 4000;
+            display: none;
+            align-items: center;
+            justify-content: center;
+        }
+        .confirm-overlay.active { display: flex; }
+        .confirm-card {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-2xl);
+            padding: var(--spacing-2xl);
+            max-width: 420px;
+            width: 90%;
+            text-align: center;
+        }
+        .confirm-card h3 { margin-bottom: var(--spacing-md); }
+        .confirm-card p  { color: var(--text-secondary); font-size:var(--font-size-sm); margin-bottom:var(--spacing-xl); }
+        .confirm-btns { display: flex; gap: var(--spacing-md); justify-content: center; }
+    </style>
+</head>
+<body class="challenge-page">
+    <!-- Background Animation -->
+    <div class="background-animation">
+        <div class="floating-elements">
+            <div class="element element-1"></div>
+            <div class="element element-3"></div>
+            <div class="element element-5"></div>
+        </div>
+    </div>
+
+    <div class="admin-container">
+        <!-- ── Top Bar ────────────────────────────────────────────── -->
+        <div class="admin-topbar">
+            <div class="logo">
+                <i class="fas fa-shield-alt"></i>
+                <span>Admin Panel</span>
+            </div>
+            <div class="admin-topbar-right">
+                <a href="/challenge" class="btn btn-secondary" style="font-size:var(--font-size-sm);">
+                    <i class="fas fa-arrow-left"></i> Dashboard
+                </a>
+                <button class="btn btn-danger" id="deleteAllBtn" style="font-size:var(--font-size-sm);">
+                    <i class="fas fa-trash-alt"></i> Delete Profile
+                </button>
+            </div>
+        </div>
+
+        <!-- ── Summary Stats ──────────────────────────────────────── -->
+        <div class="admin-stats">
+            <div class="admin-stat-card">
+                <h4>Total Sessions</h4>
+                <div class="stat-big" id="statTotal">3</div>
+            </div>
+            <div class="admin-stat-card">
+                <h4>Allowed</h4>
+                <div class="stat-big stat-green" id="statAllowed">1</div>
+            </div>
+            <div class="admin-stat-card">
+                <h4>Step-Ups</h4>
+                <div class="stat-big stat-amber" id="statStepups">1</div>
+            </div>
+            <div class="admin-stat-card">
+                <h4>Blocked</h4>
+                <div class="stat-big stat-red" id="statBlocked">1</div>
+            </div>
+        </div>
+
+        <!-- ── Flagged Sessions Table ─────────────────────────────── -->
+        <div class="flagged-table-wrap">
+            <div class="card-header">
+                <h3><i class="fas fa-flag" style="color:#ef4444;margin-right:8px;"></i> Flagged Sessions</h3>
+                <button class="btn btn-secondary" id="refreshTableBtn" style="font-size:var(--font-size-sm);">
+                    <i class="fas fa-sync-alt"></i> Refresh
+                </button>
+            </div>
+            <table class="flagged-table">
+                <thead>
+                    <tr>
+                        <th>User</th>
+                        <th>Time</th>
+                        <th>Score</th>
+                        <th>Tier</th>
+                        <th>Anomalies</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody id="flaggedTableBody">
+                    <!-- JS populates -->
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- ── Confirm Delete Overlay ─────────────────────────────────── -->
+    <div class="confirm-overlay" id="confirmOverlay">
+        <div class="confirm-card">
+            <h3><i class="fas fa-exclamation-triangle" style="color:#ef4444;"></i> Confirm Deletion</h3>
+            <p id="confirmMsg">This will permanently delete the user profile and all behavioural data. This action cannot be undone.</p>
+            <div class="confirm-btns">
+                <button class="btn btn-secondary" id="confirmCancel">Cancel</button>
+                <button class="btn btn-danger" id="confirmDelete"><i class="fas fa-trash-alt"></i> Delete</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
+    <script src="{{ url_for('static', filename='js/admin.js') }}"></script>
+</body>
+</html>
