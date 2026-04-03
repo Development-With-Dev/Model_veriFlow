@@ -194,10 +194,19 @@ class DashboardManager {
         this.isMonitoring = false;
         this.behavioralBuffer = {
             keystroke: [],
-            mouse: []
+            mouse: [],
+            touch: []
         };
         this.lastMousePosition = null;
         this.lastKeystroke = null;
+
+        // Touch biometric state
+        this.touchT0 = 0;
+        this.touchX0 = 0;
+        this.touchY0 = 0;
+        this.touchMoveDistance = 0;
+        this.touchLastMoveX = 0;
+        this.touchLastMoveY = 0;
         
         // Authentication state
         this.currentAuthScore = 0.0;
@@ -347,6 +356,11 @@ class DashboardManager {
         document.addEventListener('mousedown', (e) => this.captureMouseClick(e));
         document.addEventListener('mouseup', (e) => this.captureMouseClick(e));
         document.addEventListener('click', (e) => this.captureMouseClick(e));
+
+        // Touch biometric events
+        document.addEventListener('touchstart', (e) => this.captureTouchStart(e), { passive: true });
+        document.addEventListener('touchend',   (e) => this.captureTouchEnd(e),   { passive: true });
+        document.addEventListener('touchmove',  (e) => this.captureTouchMove(e),  { passive: true });
         
         // Test area
         this.startTest.addEventListener('click', () => this.startBehaviorTest());
@@ -626,6 +640,11 @@ class DashboardManager {
         this.statsUpdateInterval = setInterval(() => {
             this.updateGeneralStats();
         }, 30000);
+
+        // Flush touch biometric buffer every 5 s
+        this.touchFlushInterval = setInterval(() => {
+            this.sendTouchData();
+        }, 5000);
     }
 
     captureKeystroke(e) {
@@ -716,6 +735,103 @@ class DashboardManager {
         };
         
         this.behavioralBuffer.mouse.push(clickEvent);
+    }
+
+    // ─── Touch biometric capture ─────────────────────────────────
+
+    /**
+     * touchstart → save t0, x0, y0
+     */
+    captureTouchStart(e) {
+        if (!this.isMonitoring) return;
+        const touch = e.changedTouches[0];
+        this.touchT0           = performance.now();
+        this.touchX0           = touch.clientX;
+        this.touchY0           = touch.clientY;
+        this.touchMoveDistance = 0;
+        this.touchLastMoveX    = touch.clientX;
+        this.touchLastMoveY    = touch.clientY;
+    }
+
+    /**
+     * touchend → calc duration = t1 - t0, swipe speed, mock pressure
+     */
+    captureTouchEnd(e) {
+        if (!this.isMonitoring) return;
+        const t1 = performance.now();
+        const touch = e.changedTouches[0];
+
+        // Duration (ms)
+        const duration = t1 - this.touchT0;
+        const touchMs  = Math.round(duration);
+
+        // Fallback straight-line if no moves were accumulated
+        if (this.touchMoveDistance === 0) {
+            const dx = touch.clientX - this.touchX0;
+            const dy = touch.clientY - this.touchY0;
+            this.touchMoveDistance = Math.sqrt(dx * dx + dy * dy);
+        }
+
+        // Swipe speed (px / sec)
+        const durationSec      = duration / 1000 || 0.001;
+        const swipePxPerSec    = parseFloat((this.touchMoveDistance / durationSec).toFixed(2));
+
+        // Mock pressure
+        const pressure = parseFloat((0.72 + Math.random() * 0.2).toFixed(4));
+
+        // Push to touch buffer
+        this.behavioralBuffer.touch.push({
+            touch_ms:         touchMs,
+            swipe_px_per_sec: swipePxPerSec,
+            pressure:         pressure,
+            timestamp:        Date.now()
+        });
+
+        console.log(
+            `🖐️  touch  dur=${touchMs}ms  swipe=${swipePxPerSec}px/s  pressure=${pressure}`
+        );
+    }
+
+    /**
+     * touchmove → accumulate swipe distance for speed calc
+     */
+    captureTouchMove(e) {
+        if (!this.isMonitoring) return;
+        const touch = e.changedTouches[0];
+        const dx = touch.clientX - this.touchLastMoveX;
+        const dy = touch.clientY - this.touchLastMoveY;
+        this.touchMoveDistance += Math.sqrt(dx * dx + dy * dy);
+        this.touchLastMoveX = touch.clientX;
+        this.touchLastMoveY = touch.clientY;
+    }
+
+    /**
+     * POST buffered touch data to /api/behavioral-data
+     */
+    async sendTouchData() {
+        if (this.behavioralBuffer.touch.length === 0) return;
+
+        const payload = {
+            session_id: this.sessionId,
+            type:       'touch',
+            events:     this.behavioralBuffer.touch.splice(0)
+        };
+
+        try {
+            const res = await fetch('/api/behavioral-data', {
+                method:  'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body:    JSON.stringify(payload)
+            });
+            if (!res.ok) {
+                console.warn('⚠️  Touch POST failed:', res.status);
+            } else {
+                const data = await res.json();
+                console.log('✅  Touch data accepted:', data);
+            }
+        } catch (err) {
+            console.error('❌  Touch POST error:', err);
+        }
     }
 
     sendBehavioralData(type, data) {
@@ -1242,6 +1358,7 @@ class DashboardManager {
             if (this.authUpdateInterval) clearInterval(this.authUpdateInterval);
             if (this.chartUpdateInterval) clearInterval(this.chartUpdateInterval);
             if (this.statsUpdateInterval) clearInterval(this.statsUpdateInterval);
+            if (this.touchFlushInterval)  clearInterval(this.touchFlushInterval);
             
             // Clear local storage and redirect
             localStorage.clear();

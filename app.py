@@ -25,6 +25,7 @@ from database.db_manager import DatabaseManager
 from utils.feature_extractor import BehavioralFeatureExtractor
 from utils.drift_detector import BehavioralDriftDetector
 from models.behavioral_models import EnsembleBehavioralClassifier
+from utils.tier_engine import resolve_tier
 
 # Configure logging
 logging.basicConfig(
@@ -674,7 +675,278 @@ def create_app(config_name='development'):
     # =========================================================================
     # WEBSOCKET EVENTS
     # =========================================================================
-    
+
+    @app.route('/api/behavioral-data', methods=['POST'])
+    def receive_behavioral_data():
+        """
+        REST endpoint for touch (and generic behavioral) signal collection.
+        Accepts:  { session_id, type, events: [{touch_ms, swipe_px_per_sec, pressure, timestamp}, ...] }
+        Returns:  { success, samples_received, auth_score?, confidence? }
+        Pipeline: JS → Flask → Model → score back
+        """
+        try:
+            data = request.get_json()
+            if not data:
+                return jsonify({'error': 'No data provided'}), 400
+
+            session_id = data.get('session_id')
+            data_type = data.get('type', 'touch')     # 'touch', 'keystroke', 'mouse'
+            events = data.get('events', [])
+
+            if not session_id:
+                return jsonify({'error': 'session_id required'}), 400
+
+            if not events:
+                return jsonify({'success': True, 'samples_received': 0, 'message': 'No events'}), 200
+
+            # Authenticate session
+            session_data = authenticate_session(session_id)
+            if not session_data:
+                return jsonify({'error': 'Invalid or expired session'}), 401
+
+            user_id = session_data['user_id']
+
+            # Store raw events in database
+            try:
+                # Build a summary features dict from the touch events
+                touch_ms_values   = [e.get('touch_ms', 0) for e in events]
+                swipe_values      = [e.get('swipe_px_per_sec', 0) for e in events]
+                pressure_values   = [e.get('pressure', 0) for e in events]
+
+                features = {
+                    'touch_ms_mean':          sum(touch_ms_values) / len(touch_ms_values) if touch_ms_values else 0,
+                    'touch_ms_min':           min(touch_ms_values) if touch_ms_values else 0,
+                    'touch_ms_max':           max(touch_ms_values) if touch_ms_values else 0,
+                    'swipe_px_per_sec_mean':  sum(swipe_values) / len(swipe_values) if swipe_values else 0,
+                    'swipe_px_per_sec_max':   max(swipe_values) if swipe_values else 0,
+                    'pressure_mean':          sum(pressure_values) / len(pressure_values) if pressure_values else 0,
+                    'pressure_std':           float(np.std(pressure_values)) if len(pressure_values) > 1 else 0,
+                    'event_count':            len(events)
+                }
+
+                db_manager.store_behavioral_data(
+                    user_id, session_id, data_type, features, events
+                )
+            except Exception as e:
+                logger.warning(f"Error storing touch data: {e}")
+
+            # Attempt real-time authentication if calibrated
+            auth_score = None
+            confidence = None
+
+            if session_data.get('calibration_complete', False):
+                try:
+                    initialize_user_components(user_id)
+                    extractor = user_extractors.get(user_id)
+                    if extractor:
+                        fixed = extractor.fix_feature_dimensions(features)
+                        auth_result = perform_real_time_authentication(user_id, fixed, data_type)
+                        auth_score = auth_result.get('authenticity_score')
+                        confidence = auth_result.get('confidence')
+                except Exception as e:
+                    logger.warning(f"Touch auth scoring error: {e}")
+
+            response = {
+                'success': True,
+                'samples_received': len(events),
+                'data_type': data_type
+            }
+            if auth_score is not None:
+                response['auth_score'] = round(auth_score, 4)
+                response['confidence'] = round(confidence, 4)
+
+            logger.info(f"Received {len(events)} {data_type} events for user {user_id}")
+            return jsonify(response)
+
+        except Exception as e:
+            logger.error(f"Behavioral data endpoint error: {str(e)}")
+            traceback.print_exc()
+            return jsonify({'error': 'Failed to process behavioral data'}), 500
+
+    # =========================================================================
+    # RISK SCORING — contextual multipliers on top of ML auth score
+    # =========================================================================
+
+    @app.route('/api/risk', methods=['POST'])
+    def assess_risk():
+        """
+        Contextual risk assessment endpoint.
+
+        Accepts (JSON body):
+            session_id       : str   – active session identifier
+            amount           : float – transaction amount
+            recipient_type   : str   – "new" | "known"
+            hour             : int   – hour of day (0-23)
+            device_seen_before : bool – has this device been seen before? (optional, default True)
+
+        Returns:
+            ml_score         : float – raw ML authenticity score (0-1)
+            adjusted_score   : float – score after contextual multipliers
+            multipliers_fired: list  – which rules lowered the score
+            risk_level       : str   – "low" / "medium" / "high" / "critical"
+        """
+        try:
+            data = request.get_json()
+            if not data:
+                return jsonify({'error': 'No data provided'}), 400
+
+            session_id         = data.get('session_id')
+            amount             = data.get('amount', 0)
+            recipient_type     = data.get('recipient_type', 'known')
+            hour               = data.get('hour')
+            device_seen_before = data.get('device_seen_before', True)
+
+            # --- Validate required fields ---
+            if not session_id:
+                return jsonify({'error': 'session_id is required'}), 400
+
+            if hour is None:
+                # Fall back to server-side current hour
+                hour = datetime.now().hour
+
+            try:
+                amount = float(amount)
+                hour   = int(hour)
+            except (TypeError, ValueError):
+                return jsonify({'error': 'amount must be numeric, hour must be integer'}), 400
+
+            # --- Authenticate session ---
+            session_data = authenticate_session(session_id)
+            if not session_data:
+                return jsonify({'error': 'Invalid or expired session'}), 401
+
+            user_id = session_data['user_id']
+
+            # --- Obtain base ML score ---
+            ml_score = 0.85  # sensible default when model can't score yet
+
+            if session_data.get('calibration_complete', False):
+                try:
+                    initialize_user_components(user_id)
+                    recent_features = list(behavioral_buffers[user_id]['recent_features'])
+
+                    if len(recent_features) >= 5:
+                        extractor = user_extractors[user_id]
+                        normalized = [extractor.fix_feature_dimensions(f) for f in recent_features]
+                        ensemble_result = user_models[user_id].predict_ensemble(normalized)
+                        ml_score = ensemble_result['ensemble']['authenticity_score']
+                except Exception as e:
+                    logger.warning(f"Risk endpoint – ML scoring fallback: {e}")
+                    # keep default ml_score
+
+            # --- Apply contextual multipliers ---
+            adjusted_score    = float(ml_score)
+            multipliers_fired = []
+
+            # 1. High-value transaction
+            if amount > 50000:
+                adjusted_score *= 0.82
+                multipliers_fired.append({
+                    'rule':       'high_amount',
+                    'detail':     f'amount {amount:,.2f} > 50 000',
+                    'multiplier': 0.82
+                })
+
+            # 2. Off-hours transaction
+            if hour < 6 or hour > 22:
+                adjusted_score *= 0.88
+                multipliers_fired.append({
+                    'rule':       'off_hours',
+                    'detail':     f'hour {hour} outside 06:00-22:00',
+                    'multiplier': 0.88
+                })
+
+            # 3. New / unknown recipient
+            if str(recipient_type).lower() == 'new':
+                adjusted_score *= 0.85
+                multipliers_fired.append({
+                    'rule':       'new_recipient',
+                    'detail':     'recipient_type is "new"',
+                    'multiplier': 0.85
+                })
+
+            # 4. Unknown device
+            if not device_seen_before:
+                adjusted_score *= 0.78
+                multipliers_fired.append({
+                    'rule':       'unknown_device',
+                    'detail':     'device_seen_before is False',
+                    'multiplier': 0.78
+                })
+
+            # Clamp to [0, 1]
+            adjusted_score = max(0.0, min(1.0, adjusted_score))
+
+            # --- Derive risk level ---
+            if adjusted_score >= 0.80:
+                risk_level = 'low'
+            elif adjusted_score >= 0.60:
+                risk_level = 'medium'
+            elif adjusted_score >= 0.40:
+                risk_level = 'high'
+            else:
+                risk_level = 'critical'
+
+            # --- Resolve action tier (ALLOW / STEP_UP / BLOCK) ---
+            tier = resolve_tier(adjusted_score)
+
+            # --- Track consecutive anomalies in session ---
+            if session_id in active_sessions:
+                if tier == 'ALLOW':
+                    active_sessions[session_id]['consecutive_anomalies'] = 0
+                else:
+                    prev = active_sessions[session_id].get('consecutive_anomalies', 0)
+                    active_sessions[session_id]['consecutive_anomalies'] = prev + 1
+            consecutive_anomalies = active_sessions.get(session_id, {}).get('consecutive_anomalies', 0)
+
+            # --- Log the assessment ---
+            try:
+                db_manager.log_auth_event(
+                    user_id, session_id, 'risk_assessment',
+                    {
+                        'amount': amount,
+                        'recipient_type': recipient_type,
+                        'hour': hour,
+                        'device_seen_before': device_seen_before,
+                        'ml_score': round(ml_score, 4),
+                        'adjusted_score': round(adjusted_score, 4),
+                        'multipliers_fired': [m['rule'] for m in multipliers_fired],
+                        'risk_level': risk_level,
+                        'tier': tier,
+                        'consecutive_anomalies': consecutive_anomalies
+                    },
+                    request.remote_addr
+                )
+            except Exception as e:
+                logger.warning(f"Risk event logging error: {e}")
+
+            logger.info(
+                f"Risk assessment user={user_id}  ml={ml_score:.3f} → adj={adjusted_score:.3f}  "
+                f"tier={tier}  anomalies={consecutive_anomalies}  "
+                f"rules={[m['rule'] for m in multipliers_fired]}"
+            )
+
+            return jsonify({
+                'success':              True,
+                'ml_score':             round(ml_score, 4),
+                'adjusted_score':       round(adjusted_score, 4),
+                'risk_level':           risk_level,
+                'tier':                 tier,
+                'consecutive_anomalies': consecutive_anomalies,
+                'multipliers_fired':    multipliers_fired,
+                'input': {
+                    'amount':             amount,
+                    'recipient_type':     recipient_type,
+                    'hour':               hour,
+                    'device_seen_before': device_seen_before
+                }
+            })
+
+        except Exception as e:
+            logger.error(f"Risk assessment error: {str(e)}")
+            traceback.print_exc()
+            return jsonify({'error': 'Risk assessment failed'}), 500
+
     @socketio.on('connect')
     def handle_connect():
         logger.info(f"Client connected: {request.sid}")
