@@ -170,7 +170,8 @@ def create_app(config_name='development'):
                 return jsonify({
                     'success': True,
                     'message': 'User registered successfully',
-                    'user_id': user_id
+                    'user_id': user_id,
+                    'email': email
                 })
             else:
                 return jsonify({'error': 'Username or email already exists'}), 409
@@ -237,8 +238,9 @@ def create_app(config_name='development'):
                     'success': True,
                     'access_token': access_token,
                     'session_id': session_id,
-                    'user_id': user['user_id'],
+                    'user_id': user_id if 'user_id' in locals() else user['user_id'],
                     'username': user['username'],
+                    'email': user['email'],
                     'calibration_complete': bool(user['calibration_complete'])
                 }
                 
